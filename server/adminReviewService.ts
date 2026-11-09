@@ -101,9 +101,26 @@ class AdminReviewManager {
   }
 
   public verifyAdminPassword(password: string): boolean {
-    if (!this.adminHash || !this.adminSalt || !password) return false;
-    const computed = hashPassword(password, this.adminSalt);
-    return computed === this.adminHash;
+    if (!password) return false;
+    
+    // Check against Netrun Secrets ADMIN_PASSWORD first
+    const envPass = process.env.ADMIN_PASSWORD;
+    if (envPass && password === envPass) {
+      return true;
+    }
+
+    // Check against salted PBKDF2 hash
+    if (this.adminHash && this.adminSalt) {
+      const computed = hashPassword(password, this.adminSalt);
+      if (computed === this.adminHash) return true;
+    }
+
+    // Default fallback if neither is configured
+    if (!envPass && !this.adminHash) {
+      return password === 'nepal@admin2082';
+    }
+
+    return false;
   }
 
   public createSession(): string {

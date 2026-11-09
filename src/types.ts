@@ -123,3 +123,25 @@ export interface GitLfsStatusData {
   largeFilesOver50MB: { folder: string; file: string; sizeMB: string; isLfsPointer: boolean; oid: string }[];
   standardFiles: { folder: string; file: string; sizeMB: string }[];
 }
+
+export interface EnvStatusReport {
+  GITHUB_TOKEN: { isSet: boolean; message: string };
+  GITHUB_OWNER: { isSet: boolean; value: string };
+  GITHUB_REPO: { isSet: boolean; value: string };
+  GITHUB_BRANCH: { isSet: boolean; value: string };
+  ADMIN_PASSWORD: { isSet: boolean; message: string };
+  ENABLE_GIT_LFS: { isSet: boolean; isEnabled: boolean; value: string };
+  allRequiredSet: boolean;
+  missingVariables: string[];
+}
+
+export interface LfsTestReport {
+  success: boolean;
+  timestamp: string;
+  steps: {
+    name: string;
+    status: 'PASSED' | 'FAILED' | 'SKIPPED';
+    details: string;
+  }[];
+  summary: string;
+}

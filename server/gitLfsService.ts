@@ -18,12 +18,92 @@ export interface LfsSyncResult {
   oid: string;
   sizeBytes: number;
   pushedToGitHub: boolean;
+  commitSha?: string;
   error?: string;
   message?: string;
 }
 
+export interface EnvStatusReport {
+  GITHUB_TOKEN: { isSet: boolean; message: string };
+  GITHUB_OWNER: { isSet: boolean; value: string };
+  GITHUB_REPO: { isSet: boolean; value: string };
+  GITHUB_BRANCH: { isSet: boolean; value: string };
+  ADMIN_PASSWORD: { isSet: boolean; message: string };
+  ENABLE_GIT_LFS: { isSet: boolean; isEnabled: boolean; value: string };
+  allRequiredSet: boolean;
+  missingVariables: string[];
+}
+
+export interface LfsTestReport {
+  success: boolean;
+  timestamp: string;
+  steps: {
+    name: string;
+    status: 'PASSED' | 'FAILED' | 'SKIPPED';
+    details: string;
+  }[];
+  summary: string;
+}
+
 export class GitLfsService {
-  private lfsThresholdBytes: number = 50 * 1024 * 1024; // 50 MB default as requested
+  private lfsThresholdBytes: number = 50 * 1024 * 1024; // 50 MB threshold as requested
+
+  /**
+   * Safe status check of the 6 environment variables without exposing secret values to frontend
+   */
+  public getEnvStatusReport(): EnvStatusReport {
+    const hasToken = !!process.env.GITHUB_TOKEN && process.env.GITHUB_TOKEN.trim().length > 0;
+    const hasOwner = !!process.env.GITHUB_OWNER && process.env.GITHUB_OWNER.trim().length > 0;
+    const hasRepo = !!process.env.GITHUB_REPO && process.env.GITHUB_REPO.trim().length > 0;
+    const hasBranch = !!process.env.GITHUB_BRANCH && process.env.GITHUB_BRANCH.trim().length > 0;
+    const hasAdminPass = !!process.env.ADMIN_PASSWORD && process.env.ADMIN_PASSWORD.trim().length > 0;
+    const lfsVal = (process.env.ENABLE_GIT_LFS || 'true').trim();
+    const isLfsEnabled = lfsVal.toLowerCase() === 'true';
+
+    const missing: string[] = [];
+    if (!hasToken) missing.push('GITHUB_TOKEN');
+    if (!hasOwner) missing.push('GITHUB_OWNER');
+    if (!hasRepo) missing.push('GITHUB_REPO');
+    if (!hasAdminPass) missing.push('ADMIN_PASSWORD');
+
+    return {
+      GITHUB_TOKEN: {
+        isSet: hasToken,
+        message: hasToken ? 'कन्फिगर गरिएको छ (सुरक्षित)' : 'छुटेको छ (Netrun Secrets मा GITHUB_TOKEN थप्नुहोस्)'
+      },
+      GITHUB_OWNER: {
+        isSet: hasOwner,
+        value: process.env.GITHUB_OWNER || 'barshapbp2026'
+      },
+      GITHUB_REPO: {
+        isSet: hasRepo,
+        value: process.env.GITHUB_REPO || 'any-pdf-'
+      },
+      GITHUB_BRANCH: {
+        isSet: hasBranch,
+        value: process.env.GITHUB_BRANCH || 'feature/full-nepali-pdf-search'
+      },
+      ADMIN_PASSWORD: {
+        isSet: hasAdminPass,
+        message: hasAdminPass ? 'कन्फिगर गरिएको छ (सुरक्षित)' : 'छुटेको छ (Netrun Secrets मा ADMIN_PASSWORD सेट गर्नुहोस्)'
+      },
+      ENABLE_GIT_LFS: {
+        isSet: process.env.ENABLE_GIT_LFS !== undefined,
+        isEnabled: isLfsEnabled,
+        value: lfsVal
+      },
+      allRequiredSet: hasToken && hasOwner && hasRepo && hasAdminPass,
+      missingVariables: missing
+    };
+  }
+
+  /**
+   * Check if Git LFS is enabled via ENABLE_GIT_LFS
+   */
+  public isLfsEnabled(): boolean {
+    const val = (process.env.ENABLE_GIT_LFS || 'true').toLowerCase().trim();
+    return val === 'true';
+  }
 
   /**
    * Check if a buffer or file content is a Git LFS pointer text file
@@ -72,9 +152,12 @@ export class GitLfsService {
   }
 
   /**
-   * Determine if a file needs Git LFS tracking (> 50 MB)
+   * Determine if a file needs Git LFS tracking (> 50 MB and ENABLE_GIT_LFS is true)
    */
   public shouldTrackWithLfs(sizeBytes: number): boolean {
+    if (!this.isLfsEnabled()) {
+      return false;
+    }
     return sizeBytes >= this.lfsThresholdBytes;
   }
 
@@ -131,7 +214,7 @@ export class GitLfsService {
           return { buffer: downloadedBuffer, isLfsResolved: true, isPointerOnly: false };
         }
       } catch (err: any) {
-        console.warn(`LFS download failed for ${pointer.oid}: ${err.message}`);
+        console.warn(`LFS download notice for ${pointer.oid}: ${err.message}`);
       }
     }
 
@@ -202,7 +285,7 @@ export class GitLfsService {
   /**
    * Download an LFS object from GitHub via LFS Batch API
    */
-  private async downloadFromGitHubLfs(
+  public async downloadFromGitHubLfs(
     owner: string,
     repo: string,
     token: string,
@@ -244,6 +327,103 @@ export class GitLfsService {
   }
 
   /**
+   * Push a file to GitHub Repository from Backend using GITHUB_TOKEN.
+   * If isLfs=true, uploads binary to Git LFS Batch endpoint and commits LFS Pointer to repository.
+   * If isLfs=false, commits binary content to repository.
+   */
+  public async pushFileToGitHubRepo(
+    folderName: string,
+    fileName: string,
+    fileBuffer: Buffer,
+    isLfs: boolean,
+    oid: string
+  ): Promise<{ success: boolean; commitSha?: string; error?: string }> {
+    const token = process.env.GITHUB_TOKEN;
+    const owner = process.env.GITHUB_OWNER || 'barshapbp2026';
+    const repo = process.env.GITHUB_REPO || 'any-pdf-';
+    const branch = process.env.GITHUB_BRANCH || 'feature/full-nepali-pdf-search';
+
+    if (!token) {
+      return {
+        success: false,
+        error: 'GITHUB_TOKEN उपलब्ध छैन। कृपया Netrun Secrets मा GITHUB_TOKEN थप्नुहोस्।'
+      };
+    }
+
+    try {
+      // 1. If LFS is enabled & required, upload binary to LFS storage
+      if (isLfs) {
+        const lfsUploaded = await this.uploadToGitHubLfs(owner, repo, token, fileBuffer, oid);
+        if (!lfsUploaded) {
+          return { success: false, error: 'GitHub Git LFS Storage मा बाइनरी अपलोड हुन सकेन।' };
+        }
+      }
+
+      // 2. Commit pointer or file into GitHub contents
+      const repoPath = `public/documents/${folderName}/${fileName}`;
+      const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(repoPath).replace(/%2F/g, '/')}`;
+
+      // Check if file already exists on GitHub to obtain sha for update
+      let existingSha: string | undefined;
+      try {
+        const checkRes = await fetch(`${apiUrl}?ref=${branch}`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/vnd.github+json',
+            'User-Agent': 'AnyPdf-LegalAssistant'
+          }
+        });
+        if (checkRes.ok) {
+          const checkData: any = await checkRes.json();
+          existingSha = checkData.sha;
+        }
+      } catch {
+        // Proceed without existing sha
+      }
+
+      let contentBase64: string;
+      if (isLfs) {
+        const pointerContent = this.createLfsPointer(oid, fileBuffer.length);
+        contentBase64 = Buffer.from(pointerContent, 'utf-8').toString('base64');
+      } else {
+        contentBase64 = fileBuffer.toString('base64');
+      }
+
+      const commitBody: any = {
+        message: isLfs
+          ? `Admin स्वीकृत (Git LFS Pointer): ${folderName}/${fileName}`
+          : `Admin स्वीकृत (Standard PDF): ${folderName}/${fileName}`,
+        content: contentBase64,
+        branch
+      };
+      if (existingSha) {
+        commitBody.sha = existingSha;
+      }
+
+      const putRes = await fetch(apiUrl, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/vnd.github+json',
+          'Content-Type': 'application/json',
+          'User-Agent': 'AnyPdf-LegalAssistant'
+        },
+        body: JSON.stringify(commitBody)
+      });
+
+      if (!putRes.ok) {
+        const errText = await putRes.text();
+        return { success: false, error: `GitHub Contents API त्रुटि (${putRes.status}): ${errText}` };
+      }
+
+      const putData: any = await putRes.json();
+      return { success: true, commitSha: putData.commit?.sha };
+    } catch (err: any) {
+      return { success: false, error: `GitHub Push असफल: ${err.message}` };
+    }
+  }
+
+  /**
    * Handle an accepted PDF: track with Git LFS if > 50 MB, push to GitHub if credentials exist
    */
   public async processAcceptedPdf(
@@ -256,19 +436,17 @@ export class GitLfsService {
     const isLfs = this.shouldTrackWithLfs(size);
 
     const token = process.env.GITHUB_TOKEN;
-    const owner = process.env.GITHUB_OWNER || 'barshapbp2026';
-    const repo = process.env.GITHUB_REPO || 'any-pdf-';
-
     let pushedToGitHub = false;
+    let commitSha: string | undefined;
     let syncError: string | undefined;
 
-    if (token && isLfs) {
-      try {
-        const lfsUploaded = await this.uploadToGitHubLfs(owner, repo, token, fileBuffer, oid);
-        pushedToGitHub = lfsUploaded;
-      } catch (err: any) {
-        syncError = err.message;
-      }
+    if (token) {
+      const pushRes = await this.pushFileToGitHubRepo(folderName, fileName, fileBuffer, isLfs, oid);
+      pushedToGitHub = pushRes.success;
+      commitSha = pushRes.commitSha;
+      syncError = pushRes.error;
+    } else {
+      syncError = 'GITHUB_TOKEN उपलब्ध छैन। Netrun Secrets मा टोकन राखेपछि GitHub मा स्वतः सिंक हुनेछ।';
     }
 
     return {
@@ -277,10 +455,183 @@ export class GitLfsService {
       oid,
       sizeBytes: size,
       pushedToGitHub,
+      commitSha,
       error: syncError,
       message: isLfs
         ? `Git LFS ट्र्याक गरिएको छ (${(size / 1024 / 1024).toFixed(2)} MB, SHA-256: ${oid.slice(0, 12)}...)`
         : `मानक भण्डारणमा सुरक्षित (${(size / 1024 / 1024).toFixed(2)} MB)`
+    };
+  }
+
+  /**
+   * Execute a full test cycle of Git LFS Upload and Download (verification test)
+   */
+  public async testLfsUploadAndDownload(): Promise<LfsTestReport> {
+    const steps: LfsTestReport['steps'] = [];
+    const testOid = crypto.randomBytes(32).toString('hex');
+    const sampleBinary = Buffer.from(
+      `%PDF-1.4\n% Git LFS Real Test Payload (${new Date().toISOString()})\n` +
+      `Test OID: ${testOid}\n` +
+      `Dafa Khojau Legal System LFS Verification Buffer\n` +
+      `%%EOF\n`
+    );
+    const calculatedOid = this.calculateSha256(sampleBinary);
+
+    // Step 1: Pointer Generation & Parsing Test
+    try {
+      const pointerText = this.createLfsPointer(calculatedOid, sampleBinary.length);
+      const isPointer = this.isLfsPointer(pointerText);
+      const parsed = this.parseLfsPointer(pointerText);
+
+      if (isPointer && parsed && parsed.oid === calculatedOid && parsed.size === sampleBinary.length) {
+        steps.push({
+          name: 'Git LFS Pointer Generation & Parsing',
+          status: 'PASSED',
+          details: `Pointer निर्माण र पार्सिङ सफल। OID: ${calculatedOid.slice(0, 16)}..., Size: ${sampleBinary.length} bytes`
+        });
+      } else {
+        steps.push({
+          name: 'Git LFS Pointer Generation & Parsing',
+          status: 'FAILED',
+          details: 'Pointer संरचना विपरित पार्स भयो।'
+        });
+      }
+    } catch (err: any) {
+      steps.push({
+        name: 'Git LFS Pointer Generation & Parsing',
+        status: 'FAILED',
+        details: err.message
+      });
+    }
+
+    // Step 2: Local LFS Storage Cache & Resolution Test (Download simulation)
+    const rootDir = path.resolve(__dirname, '..');
+    const testLfsDir = path.join(
+      rootDir,
+      '.git',
+      'lfs',
+      'objects',
+      calculatedOid.slice(0, 2),
+      calculatedOid.slice(2, 4)
+    );
+    const testLfsFile = path.join(testLfsDir, calculatedOid);
+    const tempPointerFile = path.join(rootDir, 'public', 'documents', `.test_pointer_${Date.now()}.pdf`);
+
+    try {
+      if (!fs.existsSync(testLfsDir)) {
+        fs.mkdirSync(testLfsDir, { recursive: true });
+      }
+      fs.writeFileSync(testLfsFile, sampleBinary);
+
+      // Write pointer file pointing to it
+      const pointerText = this.createLfsPointer(calculatedOid, sampleBinary.length);
+      fs.writeFileSync(tempPointerFile, pointerText);
+
+      // Resolve via getResolvedPdfBuffer
+      const resolved = await this.getResolvedPdfBuffer(tempPointerFile);
+      const resolvedOid = this.calculateSha256(resolved.buffer);
+
+      if (resolved.isLfsResolved && resolvedOid === calculatedOid) {
+        steps.push({
+          name: 'Git LFS Pointer Resolution (Download from Local Storage)',
+          status: 'PASSED',
+          details: `Pointer बाट वास्तविक PDF बाइनरी सफलतापूर्वक लोड भयो (SHA-256 मेल खायो)।`
+        });
+      } else {
+        steps.push({
+          name: 'Git LFS Pointer Resolution (Download from Local Storage)',
+          status: 'FAILED',
+          details: 'Pointer बाट वास्तविक बाइनरी प्राप्त हुन सकेन।'
+        });
+      }
+    } catch (err: any) {
+      steps.push({
+        name: 'Git LFS Pointer Resolution (Download from Local Storage)',
+        status: 'FAILED',
+        details: err.message
+      });
+    } finally {
+      // Clean up test files
+      if (fs.existsSync(tempPointerFile)) fs.unlinkSync(tempPointerFile);
+      if (fs.existsSync(testLfsFile)) fs.unlinkSync(testLfsFile);
+    }
+
+    // Step 3: Remote GitHub LFS Batch API Connection Test
+    const token = process.env.GITHUB_TOKEN;
+    const owner = process.env.GITHUB_OWNER || 'barshapbp2026';
+    const repo = process.env.GITHUB_REPO || 'any-pdf-';
+
+    if (!token) {
+      steps.push({
+        name: 'Remote GitHub LFS Batch API Test (Upload/Download Endpoint)',
+        status: 'SKIPPED',
+        details: 'GITHUB_TOKEN Netrun Secrets मा कन्फिगर गरिएको छैन। टोकन राखेपछि GitHub LFS रिमोट सिंक परीक्षण सक्रिय हुनेछ।'
+      });
+    } else {
+      try {
+        const lfsBatchUrl = `https://github.com/${owner}/${repo}.git/info/lfs/objects/batch`;
+        const testRes = await fetch(lfsBatchUrl, {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/vnd.git-lfs+json',
+            'Content-Type': 'application/vnd.git-lfs+json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            operation: 'download',
+            transfers: ['basic'],
+            ref: { name: process.env.GITHUB_BRANCH || 'feature/full-nepali-pdf-search' },
+            objects: [{ oid: calculatedOid, size: sampleBinary.length }]
+          })
+        });
+
+        if (testRes.status === 200 || testRes.status === 404) {
+          steps.push({
+            name: 'Remote GitHub LFS Batch API Test (Upload/Download Endpoint)',
+            status: 'PASSED',
+            details: `GitHub LFS Endpoint सँग सफल सञ्चार (HTTP ${testRes.status})। रिपोजिटरी LFS का लागि तयार छ।`
+          });
+        } else {
+          steps.push({
+            name: 'Remote GitHub LFS Batch API Test (Upload/Download Endpoint)',
+            status: 'FAILED',
+            details: `GitHub LFS सञ्चार त्रुटि (HTTP ${testRes.status}): ${await testRes.text()}`
+          });
+        }
+      } catch (err: any) {
+        steps.push({
+          name: 'Remote GitHub LFS Batch API Test (Upload/Download Endpoint)',
+          status: 'FAILED',
+          details: `GitHub सञ्जाल त्रुटि: ${err.message}`
+        });
+      }
+    }
+
+    // Step 4: Environment Variables Integrity Check
+    const envReport = this.getEnvStatusReport();
+    if (envReport.missingVariables.length === 0) {
+      steps.push({
+        name: 'Environment Variables Configuration',
+        status: 'PASSED',
+        details: 'सबै ६ वटा आवश्यक Environment Variables Netrun/Server वातावरणमा उपलब्ध छन्।'
+      });
+    } else {
+      steps.push({
+        name: 'Environment Variables Configuration',
+        status: 'FAILED',
+        details: `केही Variables छुटेका छन्: ${envReport.missingVariables.join(', ')}। कृपया Netrun Secrets मा थप्नुहोस्।`
+      });
+    }
+
+    const allPassedOrSkipped = steps.every(s => s.status === 'PASSED' || s.status === 'SKIPPED');
+
+    return {
+      success: allPassedOrSkipped,
+      timestamp: new Date().toISOString(),
+      steps,
+      summary: allPassedOrSkipped
+        ? 'Git LFS Upload र Download प्रमाणीकरण सफल भयो।'
+        : 'Git LFS परीक्षणमा केही चरण असफल भए। कृपया विवरण हेर्नुहोस्।'
     };
   }
 

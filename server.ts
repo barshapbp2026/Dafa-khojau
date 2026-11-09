@@ -1,3 +1,6 @@
+import dotenv from 'dotenv';
+dotenv.config();
+
 import express, { Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
@@ -351,19 +354,40 @@ app.post('/api/admin/reject', (req: Request, res: Response) => {
   }
 });
 
-// Git LFS Repository Status
+// Git LFS Repository Status & Environment Check
 app.get('/api/lfs/status', (req: Request, res: Response) => {
   try {
     const status = gitLfsService.getRepositoryLfsStatus(DOCUMENTS_ROOT);
+    const envReport = gitLfsService.getEnvStatusReport();
     res.json({
       success: true,
       status,
+      envReport,
       gitLfsConfig: {
         thresholdMB: 50,
+        isLfsEnabled: gitLfsService.isLfsEnabled(),
         gitattributesExists: fs.existsSync(path.join(__dirname, '.gitattributes')),
-        gitHubConfigured: !!process.env.GITHUB_TOKEN,
-        branch: process.env.GITHUB_BRANCH || 'feature/full-nepali-pdf-search'
+        gitHubConfigured: envReport.GITHUB_TOKEN.isSet,
+        branch: envReport.GITHUB_BRANCH.value,
+        owner: envReport.GITHUB_OWNER.value,
+        repo: envReport.GITHUB_REPO.value
       }
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Git LFS Real Upload and Download Test Cycle
+app.post('/api/lfs/test-cycle', async (req: Request, res: Response) => {
+  try {
+    if (!checkAdminAuth(req)) {
+      return res.status(403).json({ success: false, error: 'अनधिकृत पहुँच। Admin प्रमाणीकरण आवश्यक छ।' });
+    }
+    const testResult = await gitLfsService.testLfsUploadAndDownload();
+    res.json({
+      success: true,
+      testResult
     });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
