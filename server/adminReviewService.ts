@@ -11,12 +11,14 @@ const __dirname = path.dirname(__filename);
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const DOCUMENTS_ROOT = path.join(__dirname, '..', 'public', 'documents');
+const PRIMARY_PENDING_DIR = path.join(DATA_DIR, 'pending_staging');
 const PENDING_DIR = path.join(DOCUMENTS_ROOT, '.pending_review');
 const ADMIN_CONFIG_FILE = path.join(DATA_DIR, 'admin_config.json');
 const PENDING_STORE_FILE = path.join(DATA_DIR, 'pending_reviews.json');
 
 // Ensure directories exist
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+if (!fs.existsSync(PRIMARY_PENDING_DIR)) fs.mkdirSync(PRIMARY_PENDING_DIR, { recursive: true });
 if (!fs.existsSync(PENDING_DIR)) fs.mkdirSync(PENDING_DIR, { recursive: true });
 
 export interface PendingUpload {
@@ -206,7 +208,7 @@ class AdminReviewManager {
     }
 
     const stagedFileName = `${id}_${safeFileName}`;
-    const stagingFullPath = path.join(PENDING_DIR, stagedFileName);
+    const stagingFullPath = path.join(PRIMARY_PENDING_DIR, stagedFileName);
 
     fs.writeFileSync(stagingFullPath, fileBuffer);
 
@@ -238,6 +240,19 @@ class AdminReviewManager {
   }
 
   /**
+   * Helper to locate staged file across primary (data/pending_staging) and legacy (public/documents/.pending_review)
+   */
+  private resolveStagingFilePath(stagingPath: string): string | null {
+    const primary = path.join(PRIMARY_PENDING_DIR, stagingPath);
+    if (fs.existsSync(primary)) return primary;
+
+    const legacy = path.join(PENDING_DIR, stagingPath);
+    if (fs.existsSync(legacy)) return legacy;
+
+    return null;
+  }
+
+  /**
    * Admin Accept: Move to published documents, sync Git LFS, and update search index
    */
   public async acceptUpload(
@@ -252,9 +267,12 @@ class AdminReviewManager {
       return { success: false, error: 'यो वस्तु पहिले नै समीक्षा भइसकेको छ।' };
     }
 
-    const stagingFullPath = path.join(PENDING_DIR, item.stagingPath);
-    if (!fs.existsSync(stagingFullPath)) {
-      return { success: false, error: 'Staging फाइल फेला परेन।' };
+    const stagingFullPath = this.resolveStagingFilePath(item.stagingPath);
+    if (!stagingFullPath || !fs.existsSync(stagingFullPath)) {
+      return {
+        success: false,
+        error: `Staging फाइल फेला परेन (${item.stagingPath})। कृपया पुनः अपलोड गर्नुहोस्।`
+      };
     }
 
     const targetDir = path.join(DOCUMENTS_ROOT, item.targetFolder);
@@ -276,7 +294,7 @@ class AdminReviewManager {
     // 1. Move to published documents
     fs.renameSync(stagingFullPath, finalFullPath);
 
-    // 2. Git LFS processing if > 50 MB
+    // 2. Git LFS & GitHub processing
     const lfsResult = await gitLfsService.processAcceptedPdf(item.targetFolder, finalFileName, fileBuffer);
 
     // 3. Immediately index into local search engine
@@ -303,7 +321,7 @@ class AdminReviewManager {
     securityManager.logAction(
       'UPLOAD_FILE',
       finalFileName,
-      `Admin Accepted and published to "${item.targetFolder}". Git LFS: ${lfsResult.isLfs ? 'Yes' : 'No'}. Notes: ${adminNotes}`,
+      `Admin Accepted and published to "${item.targetFolder}". GitHub Pushed: ${lfsResult.pushedToGitHub ? 'Yes' : 'No'}. Notes: ${adminNotes}`,
       adminName
     );
 
@@ -329,8 +347,8 @@ class AdminReviewManager {
       return { success: false, error: 'यो वस्तु पहिले नै समीक्षा भइसकेको छ।' };
     }
 
-    const stagingFullPath = path.join(PENDING_DIR, item.stagingPath);
-    if (fs.existsSync(stagingFullPath)) {
+    const stagingFullPath = this.resolveStagingFilePath(item.stagingPath);
+    if (stagingFullPath && fs.existsSync(stagingFullPath)) {
       fs.unlinkSync(stagingFullPath);
     }
 

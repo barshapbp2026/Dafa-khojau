@@ -26,6 +26,12 @@ if (!fs.existsSync(DOCUMENTS_ROOT)) {
 app.use(express.json({ limit: '75mb' }));
 app.use(express.urlencoded({ extended: true, limit: '75mb' }));
 
+// Guarantee application/json Content-Type header on all /api routes
+app.use('/api', (req: Request, res: Response, next) => {
+  res.setHeader('Content-Type', 'application/json');
+  next();
+});
+
 // Helper middleware for Admin Authorization
 function checkAdminAuth(req: Request): boolean {
   const token = req.headers['authorization']?.replace('Bearer ', '') ||
@@ -760,6 +766,28 @@ app.get(['/health', '/api/health', '/ping'], (req: Request, res: Response) => {
     memoryMB: (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1),
     timestamp: new Date().toISOString()
   });
+});
+
+// Catch-all for unmatched /api/* routes -> GUARANTEE JSON 404, NEVER HTML index.html
+app.all('/api/*', (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.status(404).json({
+    success: false,
+    error: `API एन्डपोइन्ट फेला परेन (${req.method} ${req.path})।`
+  });
+});
+
+// Global Express Error Handler -> Ensures JSON response for API errors
+app.use((err: any, req: Request, res: Response, next: any) => {
+  console.error('[Express API Error]:', err);
+  if (req.path.startsWith('/api') || req.headers.accept?.includes('application/json')) {
+    res.setHeader('Content-Type', 'application/json');
+    return res.status(err.status || 500).json({
+      success: false,
+      error: err.message || 'सर्भरमा अनपेक्षित त्रुटि उत्पन्न भयो।'
+    });
+  }
+  next(err);
 });
 
 // Start Server with Vite or Static Dist

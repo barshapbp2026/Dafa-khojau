@@ -359,8 +359,12 @@ export class GitLfsService {
         }
       }
 
-      // 2. Commit pointer or file into GitHub contents
-      const repoPath = `public/documents/${folderName}/${fileName}`;
+      // 2. Commit pointer or file into GitHub contents under pdf/ directory on main branch
+      const folderClean = folderName ? folderName.trim().replace(/^[\/]+|[\/]+$/g, '') : '';
+      const repoPath = (folderClean && folderClean.toLowerCase() !== 'pdf')
+        ? `pdf/${folderClean}/${fileName}`
+        : `pdf/${fileName}`;
+
       const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(repoPath).replace(/%2F/g, '/')}`;
 
       // Check if file already exists on GitHub to obtain sha for update
@@ -370,15 +374,15 @@ export class GitLfsService {
           headers: {
             'Authorization': `Bearer ${token}`,
             'Accept': 'application/vnd.github+json',
-            'User-Agent': 'AnyPdf-LegalAssistant'
+            'User-Agent': 'DafaKhojau-LegalAssistant'
           }
         });
         if (checkRes.ok) {
           const checkData: any = await checkRes.json();
           existingSha = checkData.sha;
         }
-      } catch {
-        // Proceed without existing sha
+      } catch (err: any) {
+        console.warn(`[GitHub SHA Check Notice] ${err.message}`);
       }
 
       let contentBase64: string;
@@ -391,8 +395,8 @@ export class GitLfsService {
 
       const commitBody: any = {
         message: isLfs
-          ? `Admin स्वीकृत (Git LFS Pointer): ${folderName}/${fileName}`
-          : `Admin स्वीकृत (Standard PDF): ${folderName}/${fileName}`,
+          ? `Admin स्वीकृत (Git LFS Pointer): ${repoPath}`
+          : `Admin स्वीकृत (Standard PDF): ${repoPath}`,
         content: contentBase64,
         branch
       };
@@ -406,19 +410,22 @@ export class GitLfsService {
           'Authorization': `Bearer ${token}`,
           'Accept': 'application/vnd.github+json',
           'Content-Type': 'application/json',
-          'User-Agent': 'AnyPdf-LegalAssistant'
+          'User-Agent': 'DafaKhojau-LegalAssistant'
         },
         body: JSON.stringify(commitBody)
       });
 
       if (!putRes.ok) {
         const errText = await putRes.text();
-        return { success: false, error: `GitHub Contents API त्रुटि (${putRes.status}): ${errText}` };
+        console.error(`[GitHub API Push Error] Status ${putRes.status}: ${errText}`);
+        return { success: false, error: `GitHub Contents API त्रुटि (Status ${putRes.status}): ${errText}` };
       }
 
       const putData: any = await putRes.json();
+      console.log(`[GitHub Sync Success] Saved to GitHub main branch under '${repoPath}' (Commit SHA: ${putData.commit?.sha})`);
       return { success: true, commitSha: putData.commit?.sha };
     } catch (err: any) {
+      console.error(`[GitHub Push Exception] ${err.message}`);
       return { success: false, error: `GitHub Push असफल: ${err.message}` };
     }
   }
@@ -445,8 +452,12 @@ export class GitLfsService {
       pushedToGitHub = pushRes.success;
       commitSha = pushRes.commitSha;
       syncError = pushRes.error;
+      if (!pushRes.success) {
+        console.error(`[PDF Accept GitHub Sync Failed]: ${pushRes.error}`);
+      }
     } else {
-      syncError = 'GITHUB_TOKEN उपलब्ध छैन। Netrun Secrets मा टोकन राखेपछि GitHub मा स्वतः सिंक हुनेछ।';
+      syncError = 'GITHUB_TOKEN उपलब्ध छैन (Netrun Secrets मा GITHUB_TOKEN थप्न बाँकी)।';
+      console.warn('[PDF Accept Notice]: GITHUB_TOKEN is not configured.');
     }
 
     return {
@@ -457,9 +468,9 @@ export class GitLfsService {
       pushedToGitHub,
       commitSha,
       error: syncError,
-      message: isLfs
-        ? `Git LFS ट्र्याक गरिएको छ (${(size / 1024 / 1024).toFixed(2)} MB, SHA-256: ${oid.slice(0, 12)}...)`
-        : `मानक भण्डारणमा सुरक्षित (${(size / 1024 / 1024).toFixed(2)} MB)`
+      message: pushedToGitHub
+        ? `GitHub main (pdf/ folder) मा सफलतापूर्वक सिंक भयो (Commit: ${commitSha?.slice(0, 7)}).`
+        : `स्थानीय पुस्तकालयमा उपलब्ध। (GitHub सिंक स्थिति: ${syncError})`
     };
   }
 

@@ -58,11 +58,21 @@ export const DeveloperReviewPanel: React.FC<DeveloperReviewPanelProps> = ({ onAc
   const [pendingDecisionNotes, setPendingDecisionNotes] = useState<string>('');
   const [isProcessingPending, setIsProcessingPending] = useState<boolean>(false);
 
+  // Safe JSON Fetch Helper to prevent "Unexpected token '<', '<!doctype ...'" errors
+  const safeFetchJson = async (url: string, options?: RequestInit) => {
+    const res = await fetch(url, options);
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      const text = await res.text();
+      throw new Error(`सर्भर प्रतिक्रिया JSON होइन (Status Code ${res.status}): ${text.slice(0, 150)}`);
+    }
+    return await res.json();
+  };
+
   const fetchDashboard = async () => {
     setIsLoading(true);
     try {
-      const resSec = await fetch('/api/security/dashboard');
-      const dataSec = await resSec.json();
+      const dataSec = await safeFetchJson('/api/security/dashboard');
       if (dataSec.success) {
         setRequests(dataSec.requests || []);
         setAuditLogs(dataSec.auditLogs || []);
@@ -71,16 +81,14 @@ export const DeveloperReviewPanel: React.FC<DeveloperReviewPanelProps> = ({ onAc
       // Fetch pending uploads & LFS status
       const headers: Record<string, string> = {};
       if (adminToken) headers['Authorization'] = `Bearer ${adminToken}`;
-      const resPending = await fetch('/api/admin/pending', { headers });
-      const dataPending = await resPending.json();
+      const dataPending = await safeFetchJson('/api/admin/pending', { headers });
       if (dataPending.success) {
         setPendingUploads(dataPending.pendingList || []);
         setLfsStatus(dataPending.lfsStatus || null);
       }
 
       // Fetch Git LFS environment report
-      const resLfs = await fetch('/api/lfs/status');
-      const dataLfs = await resLfs.json();
+      const dataLfs = await safeFetchJson('/api/lfs/status');
       if (dataLfs.success) {
         if (dataLfs.status) setLfsStatus(dataLfs.status);
         if (dataLfs.envReport) setEnvReport(dataLfs.envReport);
@@ -103,11 +111,10 @@ export const DeveloperReviewPanel: React.FC<DeveloperReviewPanelProps> = ({ onAc
       } else if (adminPasswordInput) {
         headers['x-admin-password'] = adminPasswordInput;
       }
-      const res = await fetch('/api/lfs/test-cycle', {
+      const data = await safeFetchJson('/api/lfs/test-cycle', {
         method: 'POST',
         headers
       });
-      const data = await res.json();
       if (data.success && data.testResult) {
         setLfsTestReport(data.testResult);
       } else {
@@ -131,12 +138,11 @@ export const DeveloperReviewPanel: React.FC<DeveloperReviewPanelProps> = ({ onAc
 
     setAdminLoginError('');
     try {
-      const res = await fetch('/api/admin/login', {
+      const data = await safeFetchJson('/api/admin/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password: adminPasswordInput })
       });
-      const data = await res.json();
       if (data.success) {
         setAdminToken(data.token);
         setIsAdminLoggedIn(true);
@@ -167,7 +173,7 @@ export const DeveloperReviewPanel: React.FC<DeveloperReviewPanelProps> = ({ onAc
         headers['x-admin-password'] = adminPass;
       }
 
-      const res = await fetch('/api/admin/accept', {
+      const data = await safeFetchJson('/api/admin/accept', {
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -176,7 +182,6 @@ export const DeveloperReviewPanel: React.FC<DeveloperReviewPanelProps> = ({ onAc
           reviewerName: 'Admin Officer'
         })
       });
-      const data = await res.json();
       setIsProcessingPending(false);
 
       if (data.success) {
@@ -212,7 +217,7 @@ export const DeveloperReviewPanel: React.FC<DeveloperReviewPanelProps> = ({ onAc
         headers['x-admin-password'] = adminPass;
       }
 
-      const res = await fetch('/api/admin/reject', {
+      const data = await safeFetchJson('/api/admin/reject', {
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -221,7 +226,6 @@ export const DeveloperReviewPanel: React.FC<DeveloperReviewPanelProps> = ({ onAc
           reviewerName: 'Admin Officer'
         })
       });
-      const data = await res.json();
       setIsProcessingPending(false);
 
       if (data.success) {
@@ -244,7 +248,7 @@ export const DeveloperReviewPanel: React.FC<DeveloperReviewPanelProps> = ({ onAc
 
     setIsSubmittingReview(true);
     try {
-      const res = await fetch('/api/security/developer-review', {
+      const data = await safeFetchJson('/api/security/developer-review', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -254,7 +258,6 @@ export const DeveloperReviewPanel: React.FC<DeveloperReviewPanelProps> = ({ onAc
           developerName: 'Lead Reviewer (Developer)'
         })
       });
-      const data = await res.json();
       setIsSubmittingReview(false);
       if (data.success) {
         setSelectedReq(null);
@@ -281,7 +284,7 @@ export const DeveloperReviewPanel: React.FC<DeveloperReviewPanelProps> = ({ onAc
     setIsVerifyingOwner(true);
     setOwnerPasswordError('');
     try {
-      const res = await fetch('/api/security/owner-confirm-delete', {
+      const data = await safeFetchJson('/api/security/owner-confirm-delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -289,7 +292,6 @@ export const DeveloperReviewPanel: React.FC<DeveloperReviewPanelProps> = ({ onAc
           ownerPassword: ownerPassword
         })
       });
-      const data = await res.json();
       setIsVerifyingOwner(false);
 
       if (data.success) {
@@ -312,12 +314,11 @@ export const DeveloperReviewPanel: React.FC<DeveloperReviewPanelProps> = ({ onAc
     if (!confirm('के तपाईं यस वस्तुलाई Trash बाट पुनः आफ्नै स्थानमा पुनर्स्थापना (Restore) गर्न चाहनुहुन्छ?')) return;
 
     try {
-      const res = await fetch('/api/security/restore', {
+      const data = await safeFetchJson('/api/security/restore', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ requestId })
       });
-      const data = await res.json();
       if (data.success) {
         fetchDashboard();
         onActionComplete();
@@ -339,7 +340,7 @@ export const DeveloperReviewPanel: React.FC<DeveloperReviewPanelProps> = ({ onAc
     }
 
     try {
-      const res = await fetch('/api/security/owner-set-password', {
+      const data = await safeFetchJson('/api/security/owner-set-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -347,7 +348,6 @@ export const DeveloperReviewPanel: React.FC<DeveloperReviewPanelProps> = ({ onAc
           newPassword: newPass
         })
       });
-      const data = await res.json();
       if (data.success) {
         setPassUpdateMsg({ text: 'Owner Password सफलतापूर्वक अद्यावधिक भयो।', success: true });
         setCurrPass('');

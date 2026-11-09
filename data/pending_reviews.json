@@ -1,0 +1,23 @@
+[
+  {
+    "id": "pnd_1794238124242_bqdr",
+    "fileName": "test_legal_document_1794238124241.pdf",
+    "targetFolder": "कानुन तथा निर्देशिका",
+    "fileSizeBytes": 467,
+    "fileSizeFormatted": "0.00 MB",
+    "sha256": "61ea6f4ef6d9dd0da1159c2ca0b7751cbd9038fd9c32f6bef6fe441dbe965cd6",
+    "stagingPath": "pnd_1794238124242_bqdr_test_legal_document_1794238124241.pdf",
+    "uploadedAt": "2026-11-09T15:28:44.242Z",
+    "uploadedBy": "Integration Tester",
+    "uploaderNotes": "परीक्षणका लागि अपलोड गरिएको कागजात",
+    "status": "ACCEPTED",
+    "adminDecision": {
+      "reviewedAt": "2026-11-09T15:28:45.917Z",
+      "reviewer": "Admin Test Officer",
+      "decision": "ACCEPTED",
+      "notes": "परीक्षण स्वीकृत गरियो",
+      "isLfsTracked": false,
+      "githubPushed": false
+    }
+  }
+]
