@@ -6,6 +6,8 @@ import { createServer as createViteServer } from 'vite';
 import { pdfIndexStore } from './server/pdfIndexer.js';
 import { testGeminiApiKey, queryInsidePdf, queryOutsidePdf } from './server/geminiService.js';
 import { securityManager } from './server/securityService.js';
+import { gitLfsService } from './server/gitLfsService.js';
+import { adminReviewManager } from './server/adminReviewService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -19,10 +21,25 @@ if (!fs.existsSync(DOCUMENTS_ROOT)) {
   fs.mkdirSync(DOCUMENTS_ROOT, { recursive: true });
 }
 
-app.use(express.json({ limit: '60mb' }));
-app.use(express.urlencoded({ extended: true, limit: '60mb' }));
+app.use(express.json({ limit: '75mb' }));
+app.use(express.urlencoded({ extended: true, limit: '75mb' }));
 
-// Helper to scan documents directory (excluding hidden/trash)
+// Helper middleware for Admin Authorization
+function checkAdminAuth(req: Request): boolean {
+  const token = req.headers['authorization']?.replace('Bearer ', '') ||
+                (req.headers['x-admin-token'] as string) ||
+                (req.query.token as string);
+  if (token && adminReviewManager.isValidSession(token)) {
+    return true;
+  }
+  const passHeader = req.headers['x-admin-password'] as string;
+  if (passHeader && adminReviewManager.verifyAdminPassword(passHeader)) {
+    return true;
+  }
+  return false;
+}
+
+// Helper to scan documents directory (excluding hidden/trash/pending)
 function getFolderTree() {
   if (!fs.existsSync(DOCUMENTS_ROOT)) return [];
   const entries = fs.readdirSync(DOCUMENTS_ROOT, { withFileTypes: true });
@@ -36,6 +53,7 @@ function getFolderTree() {
       sizeFormatted: string;
       mtime: Date;
       isIndexed: boolean;
+      isLfsTracked: boolean;
     }[];
   }[] = [];
 
@@ -48,13 +66,15 @@ function getFolderTree() {
           const filePath = path.join(folderPath, f.name);
           const stats = fs.statSync(filePath);
           const isIndexed = !!pdfIndexStore.getDocument(filePath);
+          const isLfsTracked = gitLfsService.shouldTrackWithLfs(stats.size);
           return {
             name: f.name,
             relativePath: path.join(entry.name, f.name),
             sizeBytes: stats.size,
             sizeFormatted: (stats.size / (1024 * 1024)).toFixed(2) + ' MB',
             mtime: stats.mtime,
-            isIndexed
+            isIndexed,
+            isLfsTracked
           };
         });
 
@@ -77,10 +97,15 @@ app.get('/api/folders', (req: Request, res: Response) => {
     const allDocs = pdfIndexStore.getAllDocuments();
     const totalPages = allDocs.reduce((acc, d) => acc + d.totalPages, 0);
 
+    // Pending review count
+    const pendingList = adminReviewManager.getPendingList();
+    const pendingCount = pendingList.filter(p => p.status === 'PENDING').length;
+
     res.json({
       success: true,
       folders: tree,
       loadedFolders,
+      pendingCount,
       stats: {
         totalIndexedPdfs: docCount,
         totalPagesIndexed: totalPages,
@@ -210,43 +235,146 @@ app.post('/api/files/move', (req: Request, res: Response) => {
   }
 });
 
-// 6. Upload PDF file with Duplicate Overwrite Protection
+// 6. Upload PDF file -> Staged for Admin Review with Duplicate Check & Git LFS Awareness
 app.post('/api/upload', (req: Request, res: Response) => {
   try {
-    const { folderName, fileName, base64Content } = req.body;
+    const { folderName, fileName, base64Content, uploaderNotes, uploadedBy } = req.body;
     if (!folderName || !fileName || !base64Content) {
       return res.status(400).json({ success: false, error: 'अधुरो डाटा। फोल्डर, नाम र फाइल सामग्री आवश्यक छ।' });
     }
-    const safeFolder = folderName.replace(/[\/\\:*?"<>|]/g, '').trim();
-    let safeFile = fileName.replace(/[\/\\:*?"<>|]/g, '').trim();
-    if (!safeFile.toLowerCase().endsWith('.pdf')) {
-      safeFile += '.pdf';
-    }
-
-    const folderPath = path.join(DOCUMENTS_ROOT, safeFolder);
-    if (!fs.existsSync(folderPath)) {
-      fs.mkdirSync(folderPath, { recursive: true });
-    }
-
-    let filePath = path.join(folderPath, safeFile);
-    // Duplicate filename protection: if exists, append timestamp instead of destroying old file
-    if (fs.existsSync(filePath)) {
-      const base = path.basename(safeFile, '.pdf');
-      safeFile = `${base}_${Date.now()}.pdf`;
-      filePath = path.join(folderPath, safeFile);
-    }
 
     const buffer = Buffer.from(base64Content, 'base64');
-    fs.writeFileSync(filePath, buffer);
-    securityManager.logAction('UPLOAD_FILE', safeFile, `Uploaded into "${safeFolder}" (${(buffer.length / 1024 / 1024).toFixed(2)} MB)`, 'User');
+    const stageResult = adminReviewManager.stageUpload(
+      folderName,
+      fileName,
+      buffer,
+      uploadedBy || 'User',
+      uploaderNotes
+    );
 
-    res.json({ success: true, fileName: safeFile, message: 'PDF फाइल सफलतापूर्वक सुरक्षित भयो।' });
+    if (!stageResult.success) {
+      return res.status(400).json({ success: false, error: stageResult.error });
+    }
+
+    const isLfs = gitLfsService.shouldTrackWithLfs(buffer.length);
+
+    res.json({
+      success: true,
+      pendingItem: stageResult.pendingItem,
+      isLfs,
+      message: isLfs
+        ? 'ठूलो PDF (50 MB भन्दा बढी) पत्ता लाग्यो। Admin Review पछि Git LFS मार्फत GitHub मा सुरक्षित गरिनेछ।'
+        : 'PDF फाइल सफलतापूर्वक समीक्षाका लागि Staging मा दर्ता भयो। Admin ले स्वीकृत गरेपछि मात्र प्रकाशित हुनेछ।'
+    });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// 7. Security: Request Deletion (Step 1)
+// ==========================================
+// Admin Review & Git LFS Endpoints
+// ==========================================
+
+// Admin Login
+app.post('/api/admin/login', (req: Request, res: Response) => {
+  try {
+    const { password } = req.body;
+    if (!password) {
+      return res.status(400).json({ success: false, error: 'पासवर्ड आवश्यक छ।' });
+    }
+    const isValid = adminReviewManager.verifyAdminPassword(password);
+    if (!isValid) {
+      return res.status(401).json({ success: false, error: 'गलत Admin Password।' });
+    }
+    const token = adminReviewManager.createSession();
+    res.json({ success: true, token, message: 'Admin लगइन सफल।' });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Get Pending Uploads for Admin
+app.get('/api/admin/pending', (req: Request, res: Response) => {
+  try {
+    const list = adminReviewManager.getPendingList();
+    const lfsStatus = gitLfsService.getRepositoryLfsStatus(DOCUMENTS_ROOT);
+    res.json({
+      success: true,
+      pendingList: list,
+      lfsStatus,
+      isGitHubConfigured: !!process.env.GITHUB_TOKEN
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Admin Accept Upload
+app.post('/api/admin/accept', async (req: Request, res: Response) => {
+  try {
+    if (!checkAdminAuth(req)) {
+      return res.status(403).json({ success: false, error: 'अनधिकृत पहुँच। Admin प्रमाणीकरण आवश्यक छ।' });
+    }
+    const { id, notes, reviewerName } = req.body;
+    if (!id) {
+      return res.status(400).json({ success: false, error: 'Pending ID आवश्यक छ।' });
+    }
+
+    const result = await adminReviewManager.acceptUpload(id, reviewerName || 'Admin', notes || 'स्वीकृत');
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Admin Reject Upload
+app.post('/api/admin/reject', (req: Request, res: Response) => {
+  try {
+    if (!checkAdminAuth(req)) {
+      return res.status(403).json({ success: false, error: 'अनधिकृत पहुँच। Admin प्रमाणीकरण आवश्यक छ।' });
+    }
+    const { id, reason, reviewerName } = req.body;
+    if (!id) {
+      return res.status(400).json({ success: false, error: 'Pending ID आवश्यक छ।' });
+    }
+
+    const result = adminReviewManager.rejectUpload(id, reviewerName || 'Admin', reason || 'अस्वीकृत');
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Git LFS Repository Status
+app.get('/api/lfs/status', (req: Request, res: Response) => {
+  try {
+    const status = gitLfsService.getRepositoryLfsStatus(DOCUMENTS_ROOT);
+    res.json({
+      success: true,
+      status,
+      gitLfsConfig: {
+        thresholdMB: 50,
+        gitattributesExists: fs.existsSync(path.join(__dirname, '.gitattributes')),
+        gitHubConfigured: !!process.env.GITHUB_TOKEN,
+        branch: process.env.GITHUB_BRANCH || 'feature/full-nepali-pdf-search'
+      }
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==========================================
+// Delete Security & 2-Step Protection Endpoints
+// ==========================================
+
+// Security: Request Deletion (Step 1)
 app.post('/api/security/delete-request', (req: Request, res: Response) => {
   try {
     const { itemType, targetPath, targetName, folderName, reason, requestedBy } = req.body;
@@ -282,7 +410,7 @@ app.post('/api/security/delete-request', (req: Request, res: Response) => {
   }
 });
 
-// 8. Security: Developer Review (Step 2)
+// Security: Developer Review (Step 2)
 app.post('/api/security/developer-review', (req: Request, res: Response) => {
   try {
     const { requestId, decision, notes, developerName } = req.body;
@@ -307,7 +435,7 @@ app.post('/api/security/developer-review', (req: Request, res: Response) => {
   }
 });
 
-// 9. Security: Owner Password Final Approval & Move to Trash (Step 3)
+// Security: Owner Password Final Approval & Move to Trash (Step 3)
 app.post('/api/security/owner-confirm-delete', (req: Request, res: Response) => {
   try {
     const { requestId, ownerPassword } = req.body;
@@ -336,7 +464,7 @@ app.post('/api/security/owner-confirm-delete', (req: Request, res: Response) => 
   }
 });
 
-// 10. Security: Restore from Trash
+// Security: Restore from Trash
 app.post('/api/security/restore', (req: Request, res: Response) => {
   try {
     const { requestId } = req.body;
@@ -359,7 +487,7 @@ app.post('/api/security/restore', (req: Request, res: Response) => {
   }
 });
 
-// 11. Security: Get Requests & Audit Logs
+// Security: Get Requests & Audit Logs
 app.get('/api/security/dashboard', (req: Request, res: Response) => {
   try {
     const requests = securityManager.getRequests();
@@ -380,7 +508,7 @@ app.get('/api/security/dashboard', (req: Request, res: Response) => {
   }
 });
 
-// 12. Security: Set/Update Owner Password
+// Security: Set/Update Owner Password
 app.post('/api/security/owner-set-password', (req: Request, res: Response) => {
   try {
     const { currentPassword, newPassword } = req.body;
@@ -405,7 +533,7 @@ app.post('/api/security/owner-set-password', (req: Request, res: Response) => {
   }
 });
 
-// 13. Load & Index Selected Folders or Single PDF
+// Load & Index Selected Folders or Single PDF
 app.post('/api/load-selected', async (req: Request, res: Response) => {
   try {
     const { selectedFolders, singleFolder, singlePdf, mode } = req.body;
@@ -462,7 +590,7 @@ app.post('/api/load-selected', async (req: Request, res: Response) => {
   }
 });
 
-// 14. Local Search Endpoint
+// Local Search Endpoint (Dhara, Dafa, Niyam, Nirdeshan, Anusuchi, Sabda)
 app.post('/api/search', (req: Request, res: Response) => {
   try {
     const { type, query, scope, folder, pdf } = req.body;
@@ -490,7 +618,7 @@ app.post('/api/search', (req: Request, res: Response) => {
   }
 });
 
-// 15. Get Page Content & Highlight data for PDF viewer
+// Get Page Content & Highlight data for PDF viewer
 app.get('/api/pdf-content', (req: Request, res: Response) => {
   try {
     const folder = req.query.folder as string;
@@ -533,8 +661,8 @@ app.get('/api/pdf-content', (req: Request, res: Response) => {
   }
 });
 
-// 16. Stream Raw PDF File
-app.get('/api/pdf-raw', (req: Request, res: Response) => {
+// Stream Raw PDF File (Git LFS resolved binary)
+app.get('/api/pdf-raw', async (req: Request, res: Response) => {
   try {
     const folder = req.query.folder as string;
     const file = req.query.file as string;
@@ -546,16 +674,17 @@ app.get('/api/pdf-raw', (req: Request, res: Response) => {
       return res.status(404).send('File not found');
     }
 
-    res.setHeader('Content-Type', 'application/pdf');
+    const { buffer, isPointerOnly } = await gitLfsService.getResolvedPdfBuffer(filePath);
+
+    res.setHeader('Content-Type', isPointerOnly ? 'text/plain' : 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(file)}"`);
-    const stream = fs.createReadStream(filePath);
-    stream.pipe(res);
+    res.send(buffer);
   } catch (err: any) {
     res.status(500).send(err.message);
   }
 });
 
-// 17. Gemini API Key Validation
+// Gemini API Key Validation
 app.post('/api/gemini/test-key', async (req: Request, res: Response) => {
   try {
     const { apiKey } = req.body;
@@ -569,7 +698,7 @@ app.post('/api/gemini/test-key', async (req: Request, res: Response) => {
   }
 });
 
-// 18. Gemini Chat 1: Inside PDF
+// Gemini Chat 1: Inside PDF
 app.post('/api/gemini/chat-inside', async (req: Request, res: Response) => {
   try {
     const { apiKey, question, selectedPdf } = req.body;
@@ -584,7 +713,7 @@ app.post('/api/gemini/chat-inside', async (req: Request, res: Response) => {
   }
 });
 
-// 19. Gemini Chat 2: Outside PDF / Internet Search Grounding
+// Gemini Chat 2: Outside PDF / Internet Search Grounding
 app.post('/api/gemini/chat-outside', async (req: Request, res: Response) => {
   try {
     const { apiKey, question, selectedPdf } = req.body;

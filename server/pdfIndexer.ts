@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { PDFParse } from 'pdf-parse';
+import { gitLfsService } from './gitLfsService.js';
 
 export interface IndexedHeader {
   type: 'dafa' | 'niyam' | 'dhara' | 'nirdeshan';
@@ -195,7 +196,10 @@ class PdfIndexStore {
       return existing;
     }
 
-    const dataBuffer = fs.readFileSync(filePath);
+    const { buffer: dataBuffer, isPointerOnly } = await gitLfsService.getResolvedPdfBuffer(filePath);
+    if (isPointerOnly) {
+      console.warn(`[Git LFS Notice] ${path.basename(filePath)} is currently an unresolved LFS pointer. Please run git lfs pull.`);
+    }
     const parser = new PDFParse({ data: dataBuffer });
     const parsedData = await parser.getText();
 

@@ -1,5 +1,29 @@
 [
   {
+    "id": "39240ab8-4ba0-4831-a4c6-8de0db697a6e",
+    "timestamp": "2026-11-09T05:37:57.065Z",
+    "action": "UPLOAD_FILE",
+    "targetName": "नयाँ कानुनी नमुना निर्देशिका २०८२.pdf",
+    "details": "Admin Accepted and published to \"कानुन तथा निर्देशिका\". Git LFS: No. Notes: स्वीकृत गरियो (Admin Test Approval)",
+    "actor": "प्रमुख प्रशासक"
+  },
+  {
+    "id": "0e6d7cff-698f-413e-a084-88975f86a26f",
+    "timestamp": "2026-11-09T05:36:52.399Z",
+    "action": "UPLOAD_FILE",
+    "targetName": "नयाँ कानुनी नमुना निर्देशिका २०८२.pdf",
+    "details": "Staged for Admin Review into \"कानुन तथा निर्देशिका\" (0.00 MB, SHA: da1f54ff00)",
+    "actor": "अधिवक्ता राम शर्मा"
+  },
+  {
+    "id": "00510674-923b-4f73-9b29-1667ae2bb365",
+    "timestamp": "2026-11-09T05:35:34.718Z",
+    "action": "OWNER_PASSWORD_SUCCESS",
+    "targetName": "Admin Security",
+    "details": "Admin password initialized or updated",
+    "actor": "System"
+  },
+  {
     "id": "574456a9-9158-439a-a0a0-c48a4f45dd4a",
     "timestamp": "2026-11-09T04:38:16.830Z",
     "action": "RENAME_FOLDER",

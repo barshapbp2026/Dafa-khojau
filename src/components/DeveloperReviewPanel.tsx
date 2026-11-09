@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import {
   ShieldAlert, CheckCircle, XCircle, Key, Lock, RotateCcw,
-  History, AlertTriangle, FileText, Folder, RefreshCw, Eye, MessageSquare
+  History, AlertTriangle, FileText, Folder, RefreshCw, Eye,
+  GitBranch, Database, ShieldCheck, Check, Copy, ExternalLink,
+  UploadCloud, FileCheck, Ban, ArrowRight
 } from 'lucide-react';
-import { SecurityRequestItem, AuditLogItem } from '../types';
+import { SecurityRequestItem, AuditLogItem, PendingUploadItem, GitLfsStatusData } from '../types';
 
 interface DeveloperReviewPanelProps {
   onActionComplete: () => void;
@@ -12,16 +14,27 @@ interface DeveloperReviewPanelProps {
 export const DeveloperReviewPanel: React.FC<DeveloperReviewPanelProps> = ({ onActionComplete }) => {
   const [requests, setRequests] = useState<SecurityRequestItem[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>([]);
+  const [pendingUploads, setPendingUploads] = useState<PendingUploadItem[]>([]);
+  const [lfsStatus, setLfsStatus] = useState<GitLfsStatusData | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [activeSubTab, setActiveSubTab] = useState<'requests' | 'trash' | 'audit' | 'owner-settings'>('requests');
 
-  // Review modal state
+  const [activeSubTab, setActiveSubTab] = useState<
+    'pending-uploads' | 'lfs-status' | 'requests' | 'trash' | 'audit' | 'owner-settings'
+  >('pending-uploads');
+
+  // Admin authentication state
+  const [adminToken, setAdminToken] = useState<string>('');
+  const [adminPasswordInput, setAdminPasswordInput] = useState<string>('');
+  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState<boolean>(false);
+  const [adminLoginError, setAdminLoginError] = useState<string>('');
+
+  // Review modal state (Delete requests)
   const [selectedReq, setSelectedReq] = useState<SecurityRequestItem | null>(null);
   const [reviewNotes, setReviewNotes] = useState('');
   const [reviewAction, setReviewAction] = useState<'APPROVED' | 'REJECTED'>('APPROVED');
   const [isSubmittingReview, setIsSubmittingReview] = useState(false);
 
-  // Owner password modal state
+  // Owner password modal state (Delete final step)
   const [ownerPasswordModalReq, setOwnerPasswordModalReq] = useState<SecurityRequestItem | null>(null);
   const [ownerPassword, setOwnerPassword] = useState('');
   const [ownerPasswordError, setOwnerPasswordError] = useState('');
@@ -33,26 +46,155 @@ export const DeveloperReviewPanel: React.FC<DeveloperReviewPanelProps> = ({ onAc
   const [confirmPass, setConfirmPass] = useState('');
   const [passUpdateMsg, setPassUpdateMsg] = useState<{ text: string; success: boolean } | null>(null);
 
+  // Pending upload review state
+  const [selectedPending, setSelectedPending] = useState<PendingUploadItem | null>(null);
+  const [pendingDecisionNotes, setPendingDecisionNotes] = useState<string>('');
+  const [isProcessingPending, setIsProcessingPending] = useState<boolean>(false);
+
   const fetchDashboard = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/security/dashboard');
-      const data = await res.json();
-      setIsLoading(false);
-      if (data.success) {
-        setRequests(data.requests || []);
-        setAuditLogs(data.auditLogs || []);
+      const resSec = await fetch('/api/security/dashboard');
+      const dataSec = await resSec.json();
+      if (dataSec.success) {
+        setRequests(dataSec.requests || []);
+        setAuditLogs(dataSec.auditLogs || []);
+      }
+
+      // Fetch pending uploads & LFS status
+      const headers: Record<string, string> = {};
+      if (adminToken) headers['Authorization'] = `Bearer ${adminToken}`;
+      const resPending = await fetch('/api/admin/pending', { headers });
+      const dataPending = await resPending.json();
+      if (dataPending.success) {
+        setPendingUploads(dataPending.pendingList || []);
+        setLfsStatus(dataPending.lfsStatus || null);
       }
     } catch {
+      // silently handle
+    } finally {
       setIsLoading(false);
     }
   };
 
   useEffect(() => {
     fetchDashboard();
-  }, []);
+  }, [adminToken]);
 
-  // Submit Developer Review
+  // Admin login
+  const handleAdminLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adminPasswordInput) return;
+
+    setAdminLoginError('');
+    try {
+      const res = await fetch('/api/admin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: adminPasswordInput })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setAdminToken(data.token);
+        setIsAdminLoggedIn(true);
+        setAdminPasswordInput('');
+        fetchDashboard();
+      } else {
+        setAdminLoginError(data.error || 'गलत Admin Password');
+      }
+    } catch (err: any) {
+      setAdminLoginError(err.message || 'लगइन त्रुटि');
+    }
+  };
+
+  // Admin Accept Pending Upload (Moves to library, tracks Git LFS, updates search index)
+  const handleAcceptPending = async (item: PendingUploadItem) => {
+    setIsProcessingPending(true);
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (adminToken) headers['Authorization'] = `Bearer ${adminToken}`;
+      // Fallback: prompt for password if not logged in
+      let adminPass = '';
+      if (!adminToken) {
+        adminPass = prompt('कृपया Admin Password प्रविष्ट गर्नुहोस् (डिफल्ट: nepal@admin2082):') || '';
+        if (!adminPass) {
+          setIsProcessingPending(false);
+          return;
+        }
+        headers['x-admin-password'] = adminPass;
+      }
+
+      const res = await fetch('/api/admin/accept', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          id: item.id,
+          notes: pendingDecisionNotes || 'Admin द्वारा स्वीकृत गरिएको कागजात',
+          reviewerName: 'Admin Officer'
+        })
+      });
+      const data = await res.json();
+      setIsProcessingPending(false);
+
+      if (data.success) {
+        alert(data.message || 'PDF फाइल स्वीकृत भयो र Search Index मा समावेश गरियो!');
+        setSelectedPending(null);
+        setPendingDecisionNotes('');
+        fetchDashboard();
+        onActionComplete();
+      } else {
+        alert(data.error || 'स्वीकृत असफल भयो।');
+      }
+    } catch (err: any) {
+      setIsProcessingPending(false);
+      alert(err.message || 'त्रुटि उत्पन्न भयो।');
+    }
+  };
+
+  // Admin Reject Pending Upload (Quarantine delete)
+  const handleRejectPending = async (item: PendingUploadItem) => {
+    const reason = prompt('अस्वीकृत गर्नुको कारण लेख्नुहोस् (उदा. खारेज भएको ऐन, नक्कल, गुणस्तरहीन स्क्यान):');
+    if (!reason) return;
+
+    setIsProcessingPending(true);
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (adminToken) headers['Authorization'] = `Bearer ${adminToken}`;
+      if (!adminToken) {
+        const adminPass = prompt('कृपया Admin Password प्रविष्ट गर्नुहोस् (डिफल्ट: nepal@admin2082):') || '';
+        if (!adminPass) {
+          setIsProcessingPending(false);
+          return;
+        }
+        headers['x-admin-password'] = adminPass;
+      }
+
+      const res = await fetch('/api/admin/reject', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          id: item.id,
+          reason,
+          reviewerName: 'Admin Officer'
+        })
+      });
+      const data = await res.json();
+      setIsProcessingPending(false);
+
+      if (data.success) {
+        alert(data.message || 'अनुरोध अस्वीकृत गरियो।');
+        fetchDashboard();
+        onActionComplete();
+      } else {
+        alert(data.error || 'अस्वीकृत गर्न सकिएन।');
+      }
+    } catch (err: any) {
+      setIsProcessingPending(false);
+      alert(err.message || 'त्रुटि उत्पन्न भयो।');
+    }
+  };
+
+  // Submit Developer Review for Delete
   const handleSubmitReview = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedReq || !reviewNotes.trim()) return;
@@ -177,6 +319,7 @@ export const DeveloperReviewPanel: React.FC<DeveloperReviewPanelProps> = ({ onAc
     }
   };
 
+  const pendingUploadItems = pendingUploads.filter(p => p.status === 'PENDING');
   const pendingRequests = requests.filter(r => r.status === 'PENDING_DEVELOPER' || r.status === 'APPROVED_BY_DEVELOPER');
   const trashedRequests = requests.filter(r => r.status === 'EXECUTED_TRASH');
 
@@ -190,28 +333,85 @@ export const DeveloperReviewPanel: React.FC<DeveloperReviewPanelProps> = ({ onAc
           </div>
           <div>
             <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-              <span>Developer Review & Owner Security Panel</span>
+              <span>Admin Review & Git LFS Security Panel</span>
               <span className="text-[11px] font-semibold bg-red-100 text-red-900 px-2 py-0.5 rounded-full">
-                २-चरण Delete सुरक्षा
+                सुरक्षित अभिलेखीकरण
               </span>
             </h3>
             <p className="text-xs text-slate-500">
-              कुनै पनि Folder वा PDF सिधै Delete हुँदैन — Developer Review र Owner Password अनिवार्य छ।
+              PDF Upload समीक्षा, Git LFS ट्र्याकिङ (&gt;50MB), २-चरण Delete सुरक्षा र Owner Password व्यवस्थापन
             </p>
           </div>
         </div>
 
-        <button
-          onClick={fetchDashboard}
-          className="inline-flex items-center gap-1 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 px-2.5 py-1.5 rounded-lg transition-colors"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-          <span>रिफ्रेस गर्नुहोस्</span>
-        </button>
+        <div className="flex items-center gap-2">
+          {isAdminLoggedIn ? (
+            <span className="text-xs bg-emerald-100 text-emerald-800 font-bold px-2.5 py-1 rounded-lg flex items-center gap-1">
+              <ShieldCheck className="w-3.5 h-3.5" /> Admin प्रमाणीकृत
+            </span>
+          ) : (
+            <form onSubmit={handleAdminLogin} className="flex items-center gap-1.5 text-xs">
+              <input
+                type="password"
+                placeholder="Admin Password"
+                value={adminPasswordInput}
+                onChange={e => setAdminPasswordInput(e.target.value)}
+                className="bg-slate-50 border border-slate-300 rounded px-2 py-1 text-xs w-32"
+              />
+              <button
+                type="submit"
+                className="bg-slate-800 text-white px-2.5 py-1 rounded font-semibold hover:bg-slate-900"
+              >
+                Admin लगइन
+              </button>
+            </form>
+          )}
+
+          <button
+            onClick={fetchDashboard}
+            className="inline-flex items-center gap-1 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 px-2.5 py-1.5 rounded-lg transition-colors"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+            <span>रिफ्रेस</span>
+          </button>
+        </div>
       </div>
+
+      {adminLoginError && (
+        <div className="mb-3 p-2 bg-red-50 text-red-800 text-xs rounded border border-red-200">
+          {adminLoginError}
+        </div>
+      )}
 
       {/* Sub Tabs */}
       <div className="flex border-b border-slate-200 mb-4 gap-2 text-xs font-bold overflow-x-auto">
+        {/* Tab 1: Pending Uploads (Admin Review) */}
+        <button
+          onClick={() => setActiveSubTab('pending-uploads')}
+          className={`pb-2 px-3 border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${
+            activeSubTab === 'pending-uploads'
+              ? 'border-red-900 text-red-900 font-extrabold'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <UploadCloud className="w-3.5 h-3.5" />
+          <span>Upload समीक्षा ({pendingUploadItems.length})</span>
+        </button>
+
+        {/* Tab 2: Git LFS Status */}
+        <button
+          onClick={() => setActiveSubTab('lfs-status')}
+          className={`pb-2 px-3 border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${
+            activeSubTab === 'lfs-status'
+              ? 'border-red-900 text-red-900 font-extrabold'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <GitBranch className="w-3.5 h-3.5" />
+          <span>Git LFS & Netrun स्थिति</span>
+        </button>
+
+        {/* Tab 3: Delete Requests */}
         <button
           onClick={() => setActiveSubTab('requests')}
           className={`pb-2 px-3 border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${
@@ -223,6 +423,8 @@ export const DeveloperReviewPanel: React.FC<DeveloperReviewPanelProps> = ({ onAc
           <AlertTriangle className="w-3.5 h-3.5" />
           <span>Delete अनुरोधहरू ({pendingRequests.length})</span>
         </button>
+
+        {/* Tab 4: Trash */}
         <button
           onClick={() => setActiveSubTab('trash')}
           className={`pb-2 px-3 border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${
@@ -234,6 +436,8 @@ export const DeveloperReviewPanel: React.FC<DeveloperReviewPanelProps> = ({ onAc
           <RotateCcw className="w-3.5 h-3.5" />
           <span>Trash / Soft Delete ({trashedRequests.length})</span>
         </button>
+
+        {/* Tab 5: Audit Log */}
         <button
           onClick={() => setActiveSubTab('audit')}
           className={`pb-2 px-3 border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${
@@ -245,6 +449,8 @@ export const DeveloperReviewPanel: React.FC<DeveloperReviewPanelProps> = ({ onAc
           <History className="w-3.5 h-3.5" />
           <span>सुरक्षा Audit Log ({auditLogs.length})</span>
         </button>
+
+        {/* Tab 6: Owner Password */}
         <button
           onClick={() => setActiveSubTab('owner-settings')}
           className={`pb-2 px-3 border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap ${
@@ -254,11 +460,190 @@ export const DeveloperReviewPanel: React.FC<DeveloperReviewPanelProps> = ({ onAc
           }`}
         >
           <Lock className="w-3.5 h-3.5" />
-          <span>Owner Password सेटिङ</span>
+          <span>Password सेटिङ</span>
         </button>
       </div>
 
-      {/* Tab 1: Delete Requests */}
+      {/* ============================================================ */}
+      {/* SubTab 1: Admin Review for Uploaded PDFs (Quarantine Staging) */}
+      {/* ============================================================ */}
+      {activeSubTab === 'pending-uploads' && (
+        <div className="space-y-3">
+          <div className="bg-amber-50/70 p-3 rounded-lg border border-amber-200 text-xs text-amber-900 flex items-start gap-2">
+            <ShieldAlert className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+            <div>
+              <strong>Admin Review नियम:</strong> प्रयोगकर्ताले अपलोड गरेका कुनै पनि PDF सिधै खोज वा पुस्तकालयमा समावेश हुँदैनन्। Admin ले समीक्षा गरी <strong>Accept</strong> गरेपछि मात्र सम्बन्धित फोल्डरमा सर्छ, Search Index मा जोडिन्छ र ५० MB भन्दा ठूलो भए <strong>Git LFS</strong> मार्फत GitHub मा सुरक्षित हुन्छ।
+            </div>
+          </div>
+
+          {pendingUploadItems.length === 0 ? (
+            <div className="p-6 text-center bg-slate-50 rounded-xl border border-slate-200 text-slate-500 text-xs">
+              कुनै नयाँ PDF समीक्षाका लागि बाँकी छैन।
+            </div>
+          ) : (
+            pendingUploadItems.map(item => {
+              const isOver50MB = item.fileSizeBytes >= 50 * 1024 * 1024;
+              return (
+                <div
+                  key={item.id}
+                  className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 hover:bg-white transition-all flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-2xs"
+                >
+                  <div className="space-y-1.5 min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap text-xs">
+                      <span className="font-bold flex items-center gap-1 text-slate-900">
+                        <FileText className="w-4 h-4 text-red-800" />
+                        {item.fileName}
+                      </span>
+                      <span className="text-slate-400">|</span>
+                      <span className="text-slate-600">
+                        गन्तव्य फोल्डर: <strong>{item.targetFolder}</strong>
+                      </span>
+                      <span className="text-slate-400">|</span>
+                      <span className="bg-slate-200 text-slate-800 font-semibold px-2 py-0.5 rounded text-[11px]">
+                        आकार: {item.fileSizeFormatted}
+                      </span>
+                      {isOver50MB ? (
+                        <span className="bg-purple-100 text-purple-900 font-bold px-2 py-0.5 rounded text-[11px] border border-purple-200 flex items-center gap-1">
+                          <GitBranch className="w-3 h-3 text-purple-700" />
+                          Git LFS आवश्यक (&gt;50MB)
+                        </span>
+                      ) : (
+                        <span className="bg-blue-50 text-blue-800 font-semibold px-2 py-0.5 rounded text-[11px]">
+                          मानक PDF
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="text-[11px] text-slate-500 font-mono">
+                      SHA-256: {item.sha256} | अपलोडर: {item.uploadedBy} ({new Date(item.uploadedAt).toLocaleString()})
+                    </div>
+
+                    {item.uploaderNotes && (
+                      <div className="text-xs text-slate-700 italic">
+                        टिप्पणी: "{item.uploaderNotes}"
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Accept / Reject Buttons */}
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={() => handleRejectPending(item)}
+                      disabled={isProcessingPending}
+                      className="px-3 py-1.5 bg-red-100 hover:bg-red-200 text-red-800 rounded-lg text-xs font-bold transition-colors flex items-center gap-1"
+                      title="अस्वीकृत गर्नुहोस्"
+                    >
+                      <XCircle className="w-3.5 h-3.5" />
+                      <span>Reject (अस्वीकृत)</span>
+                    </button>
+
+                    <button
+                      onClick={() => handleAcceptPending(item)}
+                      disabled={isProcessingPending}
+                      className="px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 shadow-xs"
+                      title="स्वीकृत गर्नुहोस् र Search Index/Git LFS मा थप्नुहोस्"
+                    >
+                      <CheckCircle className="w-3.5 h-3.5" />
+                      <span>Accept & Git LFS Publish</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
+
+      {/* ============================================================ */}
+      {/* SubTab 2: Git LFS & Netrun Status */}
+      {/* ============================================================ */}
+      {activeSubTab === 'lfs-status' && (
+        <div className="space-y-4 text-xs">
+          {/* LFS Architecture Card */}
+          <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+            <h4 className="font-bold text-slate-900 text-sm flex items-center gap-1.5">
+              <GitBranch className="w-4 h-4 text-purple-700" />
+              Git LFS (Large File Storage) संरचना र नियमहरू
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2">
+              <div className="bg-white p-3 rounded-lg border border-slate-200">
+                <div className="text-slate-500 text-[11px] font-semibold">LFS थ्रेसहोल्ड</div>
+                <div className="text-sm font-bold text-purple-900 mt-1">&gt; 50 MB (मेगाबाइट)</div>
+                <div className="text-[11px] text-slate-400 mt-0.5">५० MB भन्दा ठूला PDF LFS बाट ट्र्याक हुन्छन्</div>
+              </div>
+
+              <div className="bg-white p-3 rounded-lg border border-slate-200">
+                <div className="text-slate-500 text-[11px] font-semibold">.gitattributes स्थिति</div>
+                <div className="text-sm font-bold text-emerald-700 mt-1 flex items-center gap-1">
+                  <CheckCircle className="w-4 h-4" /> सक्रिय (*.pdf filter=lfs)
+                </div>
+                <div className="text-[11px] text-slate-400 mt-0.5">स्वचालित Git LFS ट्र्याकिङ कन्फिगर गरिएको</div>
+              </div>
+
+              <div className="bg-white p-3 rounded-lg border border-slate-200">
+                <div className="text-slate-500 text-[11px] font-semibold">GitHub LFS Push स्थिति</div>
+                <div className="text-sm font-bold text-slate-800 mt-1">
+                  {process.env.GITHUB_TOKEN ? (
+                    <span className="text-emerald-700 flex items-center gap-1">
+                      <CheckCircle className="w-4 h-4" /> GITHUB_TOKEN उपलब्ध
+                    </span>
+                  ) : (
+                    <span className="text-amber-700">Netrun Secrets मा थप्न बाँकी</span>
+                  )}
+                </div>
+                <div className="text-[11px] text-slate-400 mt-0.5">Admin Accept पछि स्वतः Git LFS मा पुस हुन्छ</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Files Over 50MB */}
+          <div className="p-4 bg-white rounded-xl border border-slate-200 space-y-2">
+            <h4 className="font-bold text-slate-900">
+              पुस्तकालयमा रहेका ठूला PDF हरू (Git LFS ट्र्याक गरिएका)
+            </h4>
+            {lfsStatus?.largeFilesOver50MB && lfsStatus.largeFilesOver50MB.length > 0 ? (
+              <div className="space-y-2">
+                {lfsStatus.largeFilesOver50MB.map((f, i) => (
+                  <div key={i} className="flex items-center justify-between p-2 rounded bg-purple-50/60 border border-purple-200 text-purple-950">
+                    <span className="font-bold">{f.folder} / {f.file}</span>
+                    <span className="font-mono">{f.sizeMB}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="p-3 bg-slate-50 text-slate-500 rounded text-center">
+                हाल कुनै पनि फाइल ५० MB भन्दा ठूलो छैन (नयाँ ठूला PDF अपलोड हुँदा स्वतः यहाँ देखिनेछन्)।
+              </div>
+            )}
+          </div>
+
+          {/* Netrun Deployment & Secrets Instructions */}
+          <div className="p-4 bg-slate-900 text-white rounded-xl space-y-2.5">
+            <h4 className="font-bold text-sm flex items-center gap-1.5 text-amber-300">
+              <Database className="w-4 h-4" />
+              Netrun वातावरणमा Git LFS र Secrets कन्फिगरेसन निर्देशन
+            </h4>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Netrun वा Docker मा Deploy गर्दा Private Repository बाट Git LFS फाइलहरू तान्न निम्न आदेश र Secrets प्रयोग गर्नुहोस्:
+            </p>
+            <div className="bg-black/60 p-3 rounded font-mono text-[11px] text-emerald-400 space-y-1">
+              <div># १. Netrun Build वा Start Script मा Git LFS सक्षम गर्ने:</div>
+              <div className="text-white">git lfs install</div>
+              <div className="text-white">git lfs pull</div>
+              <div className="pt-2 text-slate-400"># २. Netrun Secrets प्यानलमा निम्न कुञ्जीहरू थप्नुहोस्:</div>
+              <div>GITHUB_TOKEN="ghp_your_personal_access_token"</div>
+              <div>GITHUB_OWNER="barshapbp2026"</div>
+              <div>GITHUB_REPO="any-pdf-"</div>
+              <div>GITHUB_BRANCH="feature/full-nepali-pdf-search"</div>
+              <div>ADMIN_PASSWORD="nepal@admin2082"</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================ */}
+      {/* SubTab 3: Delete Requests (Developer Review) */}
+      {/* ============================================================ */}
       {activeSubTab === 'requests' && (
         <div className="space-y-3">
           {pendingRequests.length === 0 ? (
@@ -297,7 +682,7 @@ export const DeveloperReviewPanel: React.FC<DeveloperReviewPanelProps> = ({ onAc
 
                   {req.filesContained && req.filesContained.length > 0 && (
                     <div className="text-[11px] text-slate-500">
-                      यस फोल्डर भित्र <strong>{req.filesContained.length}</strong> वटा PDF फाइलहरू छन्: {req.filesContained.slice(0, 3).join(', ')} {req.filesContained.length > 3 ? '...' : ''}
+                      यस फोल्डर भित्र <strong>{req.filesContained.length}</strong> वटा PDF फाइलहरू छन्
                     </div>
                   )}
 
@@ -308,7 +693,6 @@ export const DeveloperReviewPanel: React.FC<DeveloperReviewPanelProps> = ({ onAc
                   )}
                 </div>
 
-                {/* Action Buttons */}
                 <div className="flex items-center gap-2 shrink-0">
                   {req.status === 'PENDING_DEVELOPER' && (
                     <button
@@ -344,7 +728,7 @@ export const DeveloperReviewPanel: React.FC<DeveloperReviewPanelProps> = ({ onAc
         </div>
       )}
 
-      {/* Tab 2: Trash / Soft Delete */}
+      {/* SubTab 4: Trash */}
       {activeSubTab === 'trash' && (
         <div className="space-y-3">
           {trashedRequests.length === 0 ? (
@@ -365,9 +749,6 @@ export const DeveloperReviewPanel: React.FC<DeveloperReviewPanelProps> = ({ onAc
                   <div className="text-[11px] text-slate-500 mt-0.5">
                     स्थान: {item.targetPath} | Delete मिति: {item.ownerApproval ? new Date(item.ownerApproval.approvedAt).toLocaleString() : ''}
                   </div>
-                  <div className="text-[11px] text-slate-600">
-                    कारण: {item.reason}
-                  </div>
                 </div>
 
                 <button
@@ -383,7 +764,7 @@ export const DeveloperReviewPanel: React.FC<DeveloperReviewPanelProps> = ({ onAc
         </div>
       )}
 
-      {/* Tab 3: Security Audit Log */}
+      {/* SubTab 5: Audit Log */}
       {activeSubTab === 'audit' && (
         <div className="space-y-2 max-h-96 overflow-y-auto">
           {auditLogs.length === 0 ? (
@@ -398,9 +779,9 @@ export const DeveloperReviewPanel: React.FC<DeveloperReviewPanelProps> = ({ onAc
               >
                 <div className="flex items-center gap-2">
                   <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                    log.action.includes('SUCCESS') || log.action.includes('RESTORE')
+                    log.action.includes('SUCCESS') || log.action.includes('RESTORE') || log.action.includes('ACCEPT')
                       ? 'bg-emerald-100 text-emerald-800'
-                      : log.action.includes('FAIL') || log.action.includes('TRASH')
+                      : log.action.includes('FAIL') || log.action.includes('TRASH') || log.action.includes('REJECT')
                       ? 'bg-red-100 text-red-800'
                       : 'bg-blue-100 text-blue-800'
                   }`}>
@@ -418,12 +799,12 @@ export const DeveloperReviewPanel: React.FC<DeveloperReviewPanelProps> = ({ onAc
         </div>
       )}
 
-      {/* Tab 4: Owner Password Settings */}
+      {/* SubTab 6: Owner Password Settings */}
       {activeSubTab === 'owner-settings' && (
         <div className="max-w-md p-4 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-3">
           <h4 className="font-bold text-slate-900 text-sm flex items-center gap-1.5">
             <Lock className="w-4 h-4 text-red-800" />
-            Owner Password व्यवस्थापन
+            Owner & Admin Password व्यवस्थापन
           </h4>
           <p className="text-slate-600">
             यो पासवर्ड Delete approval का लागि मात्र प्रयोग हुन्छ। यो कहिल्यै GitHub वा frontend मा राखिँदैन, सर्भरमा PBKDF2/SHA-512 ले सुरक्षित hash गरिन्छ।

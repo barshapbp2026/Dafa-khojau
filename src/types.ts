@@ -95,3 +95,31 @@ export interface AuditLogItem {
   details: string;
   actor: string;
 }
+
+export interface PendingUploadItem {
+  id: string;
+  fileName: string;
+  targetFolder: string;
+  fileSizeBytes: number;
+  fileSizeFormatted: string;
+  sha256: string;
+  stagingPath: string;
+  uploadedAt: string;
+  uploadedBy: string;
+  uploaderNotes?: string;
+  status: 'PENDING' | 'ACCEPTED' | 'REJECTED';
+  adminDecision?: {
+    reviewedAt: string;
+    reviewer: string;
+    decision: 'ACCEPTED' | 'REJECTED';
+    notes: string;
+    isLfsTracked: boolean;
+    githubPushed: boolean;
+  };
+}
+
+export interface GitLfsStatusData {
+  totalFiles: number;
+  largeFilesOver50MB: { folder: string; file: string; sizeMB: string; isLfsPointer: boolean; oid: string }[];
+  standardFiles: { folder: string; file: string; sizeMB: string }[];
+}
