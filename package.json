@@ -6,9 +6,10 @@
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build",
-    "start": "NODE_ENV=production tsx server.ts",
+    "prestart": "npm run build",
+    "start": "NODE_ENV=production NODE_OPTIONS='--max-old-space-size=450' tsx server.ts",
     "preview": "vite preview",
-    "clean": "rm -rf dist server.js",
+    "clean": "rm -rf dist server.js data/index_cache",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

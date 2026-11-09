@@ -16,7 +16,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = 3000;
+const PORT = parseInt(process.env.PORT || '3000', 10);
 const DOCUMENTS_ROOT = path.join(__dirname, 'public', 'documents');
 
 // Ensure documents directory exists
@@ -752,7 +752,18 @@ app.post('/api/gemini/chat-outside', async (req: Request, res: Response) => {
   }
 });
 
-// Start Server with Vite
+// Netrun / Cloud Run Health Check Endpoint (Instant 200 without heavy processing)
+app.get(['/health', '/api/health', '/ping'], (req: Request, res: Response) => {
+  res.status(200).json({
+    status: 'ok',
+    service: 'Dafa-khojau',
+    uptime: Math.round(process.uptime()),
+    memoryMB: (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1),
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Start Server with Vite or Static Dist
 async function startServer() {
   const isDev = process.env.NODE_ENV !== 'production';
 
@@ -763,15 +774,41 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    app.use(express.static(path.join(__dirname, 'dist')));
-    app.get('*', (req: Request, res: Response) => {
-      res.sendFile(path.join(__dirname, 'dist', 'index.html'));
-    });
+    const distPath = path.join(__dirname, 'dist');
+    const indexPath = path.join(distPath, 'index.html');
+
+    if (fs.existsSync(distPath) && fs.existsSync(indexPath)) {
+      app.use(express.static(distPath));
+      app.get('*', (req: Request, res: Response) => {
+        res.sendFile(indexPath);
+      });
+    } else {
+      // Graceful fallback if dist is missing in production container: run Vite on-demand without crashing!
+      console.warn('[Production Notice] dist/index.html not found, fallback to dynamic server to prevent crash.');
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: 'spa'
+      });
+      app.use(vite.middlewares);
+    }
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Nepali Legal PDF Assistant server running on http://0.0.0.0:${PORT}`);
+  const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Nepali Legal PDF Assistant server running on http://0.0.0.0:${PORT} (PID: ${process.pid}, NODE_ENV: ${process.env.NODE_ENV || 'development'})`);
   });
+
+  // Graceful shutdown on SIGTERM / SIGINT to avoid unhandled forced kill
+  const shutdown = (signal: string) => {
+    console.log(`[Lifecycle] Received ${signal}. Closing server gracefully...`);
+    server.close(() => {
+      console.log('[Lifecycle] HTTP server closed.');
+      process.exit(0);
+    });
+    setTimeout(() => process.exit(0), 5000);
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
 startServer().catch(err => {

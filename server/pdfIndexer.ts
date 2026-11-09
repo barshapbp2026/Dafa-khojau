@@ -1,7 +1,16 @@
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
+import { fileURLToPath } from 'url';
 import { PDFParse } from 'pdf-parse';
 import { gitLfsService } from './gitLfsService.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const CACHE_DIR = path.join(__dirname, '..', 'data', 'index_cache');
+if (!fs.existsSync(CACHE_DIR)) {
+  fs.mkdirSync(CACHE_DIR, { recursive: true });
+}
 
 export interface IndexedHeader {
   type: 'dafa' | 'niyam' | 'dhara' | 'nirdeshan';
@@ -186,6 +195,16 @@ class PdfIndexStore {
     }
   }
 
+  private getCacheKey(filePath: string): string {
+    try {
+      const stat = fs.statSync(filePath);
+      const keyString = `${filePath}_${stat.size}_${stat.mtimeMs}`;
+      return crypto.createHash('sha256').update(keyString).digest('hex');
+    } catch {
+      return crypto.createHash('sha256').update(filePath).digest('hex');
+    }
+  }
+
   /**
    * Parse a single PDF file and extract all headers, anusuchis, and pages
    */
@@ -194,6 +213,23 @@ class PdfIndexStore {
     if (existing) {
       this.loadedFolders.add(folderName);
       return existing;
+    }
+
+    const cacheKey = this.getCacheKey(filePath);
+    const cacheFile = path.join(CACHE_DIR, `${cacheKey}.json`);
+
+    if (fs.existsSync(cacheFile)) {
+      try {
+        const cachedRaw = fs.readFileSync(cacheFile, 'utf-8');
+        const cachedDoc: IndexedDocument = JSON.parse(cachedRaw);
+        cachedDoc.folder = folderName;
+        this.documents.set(filePath, cachedDoc);
+        this.loadedFolders.add(folderName);
+        console.log(`[Cache Hit] Fast-loaded index for ${path.basename(filePath)} (<10ms).`);
+        return cachedDoc;
+      } catch (err: any) {
+        console.warn(`[Cache Notice] Re-indexing ${path.basename(filePath)}: ${err.message}`);
+      }
     }
 
     const { buffer: dataBuffer, isPointerOnly } = await gitLfsService.getResolvedPdfBuffer(filePath);
@@ -398,6 +434,14 @@ class PdfIndexStore {
 
     this.documents.set(filePath, doc);
     this.loadedFolders.add(folderName);
+
+    try {
+      fs.writeFileSync(cacheFile, JSON.stringify(doc));
+      console.log(`[Cache Saved] Persisted index for ${path.basename(filePath)} to disk.`);
+    } catch (err: any) {
+      console.warn(`[Cache Notice] Could not persist index for ${path.basename(filePath)}: ${err.message}`);
+    }
+
     return doc;
   }
 
