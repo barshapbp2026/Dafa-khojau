@@ -5,7 +5,6 @@ import express, { Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { createServer as createViteServer } from 'vite';
 import { pdfIndexStore } from './server/pdfIndexer.js';
 import { testGeminiApiKey, queryInsidePdf, queryOutsidePdf } from './server/geminiService.js';
 import { securityManager } from './server/securityService.js';
@@ -768,6 +767,7 @@ async function startServer() {
   const isDev = process.env.NODE_ENV !== 'production';
 
   if (isDev) {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa'
@@ -783,8 +783,8 @@ async function startServer() {
         res.sendFile(indexPath);
       });
     } else {
-      // Graceful fallback if dist is missing in production container: run Vite on-demand without crashing!
       console.warn('[Production Notice] dist/index.html not found, fallback to dynamic server to prevent crash.');
+      const { createServer: createViteServer } = await import('vite');
       const vite = await createViteServer({
         server: { middlewareMode: true },
         appType: 'spa'
