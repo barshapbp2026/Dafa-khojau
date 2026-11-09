@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search, Hash, FileText, Layers, Bookmark, BookOpen, Sparkles, X, ArrowRight } from 'lucide-react';
+import { Search, Hash, FileText, Layers, Bookmark, BookOpen, Sparkles, X } from 'lucide-react';
 import { SearchType } from '../types';
 
 interface SearchSectionProps {
@@ -15,10 +15,10 @@ export const SearchSection: React.FC<SearchSectionProps> = ({
   activeType,
   mode
 }) => {
-  // 6 independent inputs state
+  // 6 independent inputs state (Order: 1. धारा, 2. दफा, 3. नियम, 4. निर्देशन, 5. अनुसूची, 6. शब्द)
+  const [dharaQuery, setDharaQuery] = useState('');
   const [dafaQuery, setDafaQuery] = useState('');
   const [niyamQuery, setNiyamQuery] = useState('');
-  const [dharaQuery, setDharaQuery] = useState('');
   const [nirdeshanQuery, setNirdeshanQuery] = useState('');
   const [anusuchiQuery, setAnusuchiQuery] = useState('');
   const [sabdaQuery, setSabdaQuery] = useState('');
@@ -48,13 +48,22 @@ export const SearchSection: React.FC<SearchSectionProps> = ({
             </span>
           </h3>
           <p className="text-xs text-slate-500 mt-0.5">
-            प्रत्येक बाकस पूर्ण रूपमा स्वतन्त्र छ। नम्बर वा शब्द प्रविष्ट गरी खोज्नुहोस्।
+            क्रम: १. धारा | २. दफा | ३. नियम | ४. निर्देशन | ५. अनुसूची | ६. शब्द (प्रत्येक बाकस पूर्ण रूपमा स्वतन्त्र छ)
           </p>
         </div>
 
         {/* Quick test pills */}
         <div className="flex items-center gap-1.5 flex-wrap text-xs">
           <span className="text-slate-400 font-semibold text-[11px]">द्रुत परीक्षण:</span>
+          <button
+            onClick={() => {
+              setDharaQuery('१७');
+              handleExecute('dhara', '१७');
+            }}
+            className="px-2 py-0.5 bg-amber-50 text-amber-900 border border-amber-200 rounded text-[11px] font-semibold hover:bg-amber-100 transition-colors"
+          >
+            धारा १७
+          </button>
           <button
             onClick={() => {
               setDafaQuery('२२२');
@@ -66,10 +75,19 @@ export const SearchSection: React.FC<SearchSectionProps> = ({
           </button>
           <button
             onClick={() => {
+              setNiyamQuery('१५');
+              handleExecute('niyam', '१५');
+            }}
+            className="px-2 py-0.5 bg-blue-50 text-blue-900 border border-blue-200 rounded text-[11px] font-semibold hover:bg-blue-100 transition-colors"
+          >
+            नियम १५
+          </button>
+          <button
+            onClick={() => {
               setAnusuchiQuery('१');
               handleExecute('anusuchi', '१');
             }}
-            className="px-2 py-0.5 bg-slate-100 text-slate-800 rounded text-[11px] font-semibold hover:bg-slate-200 transition-colors"
+            className="px-2 py-0.5 bg-purple-50 text-purple-900 border border-purple-200 rounded text-[11px] font-semibold hover:bg-purple-100 transition-colors"
           >
             अनुसूची १
           </button>
@@ -78,7 +96,7 @@ export const SearchSection: React.FC<SearchSectionProps> = ({
               setAnusuchiQuery('६३');
               handleExecute('anusuchi', '६३');
             }}
-            className="px-2 py-0.5 bg-slate-100 text-slate-800 rounded text-[11px] font-semibold hover:bg-slate-200 transition-colors"
+            className="px-2 py-0.5 bg-purple-50 text-purple-900 border border-purple-200 rounded text-[11px] font-semibold hover:bg-purple-100 transition-colors"
           >
             अनुसूची ६३
           </button>
@@ -87,23 +105,64 @@ export const SearchSection: React.FC<SearchSectionProps> = ({
               setSabdaQuery('टायल चेक');
               handleExecute('sabda', 'टायल चेक');
             }}
-            className="px-2 py-0.5 bg-amber-50 text-amber-900 border border-amber-200 rounded text-[11px] font-semibold hover:bg-amber-100 transition-colors"
+            className="px-2 py-0.5 bg-rose-50 text-rose-900 border border-rose-200 rounded text-[11px] font-semibold hover:bg-rose-100 transition-colors"
           >
-            शब्द: टायल चेक (Header)
+            शब्द: टायल चेक (Header मात्र)
           </button>
         </div>
       </div>
 
-      {/* 6 Independent Search Grid */}
+      {/* 6 Independent Search Grid in EXACT Order */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
-        {/* 1. दफा खोज */}
+        {/* १. धारा खोज (Dhara) */}
+        <div className={`p-3 rounded-lg border transition-all ${
+          activeType === 'dhara' ? 'border-red-400 bg-red-50/20 ring-1 ring-red-400' : 'border-slate-200 bg-slate-50/50'
+        }`}>
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+              <Bookmark className="w-3.5 h-3.5 text-amber-700" />
+              १. धारा खोज (Dhara)
+            </label>
+            <span className="text-[10px] text-slate-400">उदा. १७, ४८</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div className="relative flex-1">
+              <input
+                type="text"
+                placeholder="धारा नं. (उदा. १७ वा 17)"
+                value={dharaQuery}
+                onChange={e => setDharaQuery(e.target.value)}
+                onKeyDown={e => handleKeyDown(e, 'dhara', dharaQuery)}
+                className="w-full text-xs sm:text-sm bg-white border border-slate-300 rounded-md px-2.5 py-1.5 pr-6 text-slate-800 focus:ring-1 focus:ring-red-700 focus:border-red-700 outline-none"
+              />
+              {dharaQuery && (
+                <button
+                  onClick={() => setDharaQuery('')}
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+            <button
+              onClick={() => handleExecute('dhara', dharaQuery)}
+              disabled={isSearching || !dharaQuery.trim()}
+              className="px-3 py-1.5 bg-red-900 text-white font-bold rounded-md text-xs hover:bg-red-950 disabled:opacity-50 transition-colors shrink-0 flex items-center gap-1"
+              style={{ backgroundColor: '#8B0000' }}
+            >
+              {isSearching && activeType === 'dhara' ? '...' : 'खोज्नुहोस्'}
+            </button>
+          </div>
+        </div>
+
+        {/* २. दफा खोज (Dafa) */}
         <div className={`p-3 rounded-lg border transition-all ${
           activeType === 'dafa' ? 'border-red-400 bg-red-50/20 ring-1 ring-red-400' : 'border-slate-200 bg-slate-50/50'
         }`}>
           <div className="flex items-center justify-between mb-1.5">
             <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
               <Hash className="w-3.5 h-3.5 text-red-700" />
-              १. दफा खोज (Dafa)
+              २. दफा खोज (Dafa)
             </label>
             <span className="text-[10px] text-slate-400">उदा. २२२, १, २२२क</span>
           </div>
@@ -137,14 +196,14 @@ export const SearchSection: React.FC<SearchSectionProps> = ({
           </div>
         </div>
 
-        {/* 2. नियम खोज */}
+        {/* ३. नियम खोज (Niyam) */}
         <div className={`p-3 rounded-lg border transition-all ${
           activeType === 'niyam' ? 'border-red-400 bg-red-50/20 ring-1 ring-red-400' : 'border-slate-200 bg-slate-50/50'
         }`}>
           <div className="flex items-center justify-between mb-1.5">
             <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
               <Layers className="w-3.5 h-3.5 text-blue-700" />
-              २. नियम खोज (Niyam)
+              ३. नियम खोज (Niyam)
             </label>
             <span className="text-[10px] text-slate-400">उदा. १५, २७, 15</span>
           </div>
@@ -178,48 +237,7 @@ export const SearchSection: React.FC<SearchSectionProps> = ({
           </div>
         </div>
 
-        {/* 3. धारा खोज */}
-        <div className={`p-3 rounded-lg border transition-all ${
-          activeType === 'dhara' ? 'border-red-400 bg-red-50/20 ring-1 ring-red-400' : 'border-slate-200 bg-slate-50/50'
-        }`}>
-          <div className="flex items-center justify-between mb-1.5">
-            <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-              <Bookmark className="w-3.5 h-3.5 text-amber-700" />
-              ३. धारा खोज (Dhara)
-            </label>
-            <span className="text-[10px] text-slate-400">संविधान / ऐन धारा</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <div className="relative flex-1">
-              <input
-                type="text"
-                placeholder="धारा नं. (उदा. १७ वा 17)"
-                value={dharaQuery}
-                onChange={e => setDharaQuery(e.target.value)}
-                onKeyDown={e => handleKeyDown(e, 'dhara', dharaQuery)}
-                className="w-full text-xs sm:text-sm bg-white border border-slate-300 rounded-md px-2.5 py-1.5 pr-6 text-slate-800 focus:ring-1 focus:ring-red-700 focus:border-red-700 outline-none"
-              />
-              {dharaQuery && (
-                <button
-                  onClick={() => setDharaQuery('')}
-                  className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5"
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              )}
-            </div>
-            <button
-              onClick={() => handleExecute('dhara', dharaQuery)}
-              disabled={isSearching || !dharaQuery.trim()}
-              className="px-3 py-1.5 bg-red-900 text-white font-bold rounded-md text-xs hover:bg-red-950 disabled:opacity-50 transition-colors shrink-0 flex items-center gap-1"
-              style={{ backgroundColor: '#8B0000' }}
-            >
-              {isSearching && activeType === 'dhara' ? '...' : 'खोज्नुहोस्'}
-            </button>
-          </div>
-        </div>
-
-        {/* 4. निर्देशन खोज */}
+        {/* ४. निर्देशन खोज (Nirdeshan) */}
         <div className={`p-3 rounded-lg border transition-all ${
           activeType === 'nirdeshan' ? 'border-red-400 bg-red-50/20 ring-1 ring-red-400' : 'border-slate-200 bg-slate-50/50'
         }`}>
@@ -260,7 +278,7 @@ export const SearchSection: React.FC<SearchSectionProps> = ({
           </div>
         </div>
 
-        {/* 5. अनुसूची खोज (Reverse Scan Engine) */}
+        {/* ५. अनुसूची खोज (Anusuchi - Reverse Scan) */}
         <div className={`p-3 rounded-lg border transition-all ${
           activeType === 'anusuchi' ? 'border-red-400 bg-red-50/20 ring-1 ring-red-400' : 'border-slate-200 bg-slate-50/50'
         }`}>
@@ -303,16 +321,16 @@ export const SearchSection: React.FC<SearchSectionProps> = ({
           </div>
         </div>
 
-        {/* 6. शब्द खोज (Header Only) */}
+        {/* ६. शब्द खोज (Sabda - Header Only) */}
         <div className={`p-3 rounded-lg border transition-all ${
           activeType === 'sabda' ? 'border-red-400 bg-red-50/20 ring-1 ring-red-400' : 'border-slate-200 bg-slate-50/50'
         }`}>
           <div className="flex items-center justify-between mb-1.5">
             <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-amber-700" />
+              <Sparkles className="w-3.5 h-3.5 text-rose-700" />
               ६. शब्द खोज (Sabda)
             </label>
-            <span className="text-[10px] text-amber-800 font-semibold bg-amber-50 px-1.5 py-0.2 rounded border border-amber-200">
+            <span className="text-[10px] text-rose-800 font-semibold bg-rose-50 px-1.5 py-0.2 rounded border border-rose-200">
               Header मात्र (No Body Text)
             </span>
           </div>

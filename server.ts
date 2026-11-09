@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import { pdfIndexStore } from './server/pdfIndexer.js';
 import { testGeminiApiKey, queryInsidePdf, queryOutsidePdf } from './server/geminiService.js';
+import { securityManager } from './server/securityService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -21,7 +22,7 @@ if (!fs.existsSync(DOCUMENTS_ROOT)) {
 app.use(express.json({ limit: '60mb' }));
 app.use(express.urlencoded({ extended: true, limit: '60mb' }));
 
-// Helper to scan documents directory
+// Helper to scan documents directory (excluding hidden/trash)
 function getFolderTree() {
   if (!fs.existsSync(DOCUMENTS_ROOT)) return [];
   const entries = fs.readdirSync(DOCUMENTS_ROOT, { withFileTypes: true });
@@ -39,7 +40,7 @@ function getFolderTree() {
   }[] = [];
 
   for (const entry of entries) {
-    if (entry.isDirectory()) {
+    if (entry.isDirectory() && !entry.name.startsWith('.')) {
       const folderPath = path.join(DOCUMENTS_ROOT, entry.name);
       const files = fs.readdirSync(folderPath, { withFileTypes: true })
         .filter(f => f.isFile() && f.name.toLowerCase().endsWith('.pdf'))
@@ -101,9 +102,13 @@ app.post('/api/folders/create', (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'फोल्डरको नाम आवश्यक छ।' });
     }
     const safeName = folderName.replace(/[\/\\:*?"<>|]/g, '').trim();
+    if (!safeName) {
+      return res.status(400).json({ success: false, error: 'अमान्य फोल्डर नाम।' });
+    }
     const targetDir = path.join(DOCUMENTS_ROOT, safeName);
     if (!fs.existsSync(targetDir)) {
       fs.mkdirSync(targetDir, { recursive: true });
+      securityManager.logAction('CREATE_FOLDER', safeName, `New folder created: ${safeName}`, 'User');
     }
     res.json({ success: true, folderName: safeName });
   } catch (err: any) {
@@ -111,7 +116,101 @@ app.post('/api/folders/create', (req: Request, res: Response) => {
   }
 });
 
-// 3. Upload PDF file
+// 3. Rename Folder
+app.post('/api/folders/rename', (req: Request, res: Response) => {
+  try {
+    const { oldName, newName } = req.body;
+    if (!oldName || !newName) {
+      return res.status(400).json({ success: false, error: 'पुरानो र नयाँ फोल्डर नाम आवश्यक छ।' });
+    }
+    const safeOld = oldName.replace(/[\/\\:*?"<>|]/g, '').trim();
+    const safeNew = newName.replace(/[\/\\:*?"<>|]/g, '').trim();
+    const oldPath = path.join(DOCUMENTS_ROOT, safeOld);
+    const newPath = path.join(DOCUMENTS_ROOT, safeNew);
+
+    if (!fs.existsSync(oldPath)) {
+      return res.status(404).json({ success: false, error: 'पुरानो फोल्डर फेला परेन।' });
+    }
+    if (fs.existsSync(newPath) && safeOld !== safeNew) {
+      return res.status(400).json({ success: false, error: 'उक्त नामको फोल्डर पहिल्यै अवस्थित छ।' });
+    }
+
+    fs.renameSync(oldPath, newPath);
+    pdfIndexStore.renameFolder(safeOld, safeNew);
+    securityManager.logAction('RENAME_FOLDER', safeOld, `Folder renamed from "${safeOld}" to "${safeNew}"`, 'User');
+
+    res.json({ success: true, oldName: safeOld, newName: safeNew });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 4. Rename PDF File
+app.post('/api/files/rename', (req: Request, res: Response) => {
+  try {
+    const { folderName, oldFileName, newFileName } = req.body;
+    if (!folderName || !oldFileName || !newFileName) {
+      return res.status(400).json({ success: false, error: 'फोल्डर, पुरानो नाम र नयाँ नाम आवश्यक छ।' });
+    }
+    const safeOld = oldFileName.replace(/[\/\\:*?"<>|]/g, '').trim();
+    let safeNew = newFileName.replace(/[\/\\:*?"<>|]/g, '').trim();
+    if (!safeNew.toLowerCase().endsWith('.pdf')) {
+      safeNew += '.pdf';
+    }
+
+    const folderDir = path.join(DOCUMENTS_ROOT, folderName);
+    const oldFilePath = path.join(folderDir, safeOld);
+    const newFilePath = path.join(folderDir, safeNew);
+
+    if (!fs.existsSync(oldFilePath)) {
+      return res.status(404).json({ success: false, error: 'पुरानो PDF फाइल फेला परेन।' });
+    }
+    if (fs.existsSync(newFilePath) && safeOld !== safeNew) {
+      return res.status(400).json({ success: false, error: 'यो नामको PDF फाइल यस फोल्डरमा पहिल्यै छ (Overwrite निषेध गरिएको छ)।' });
+    }
+
+    fs.renameSync(oldFilePath, newFilePath);
+    pdfIndexStore.renameDocument(oldFilePath, newFilePath, safeNew);
+    securityManager.logAction('RENAME_FILE', safeOld, `PDF renamed from "${safeOld}" to "${safeNew}" in "${folderName}"`, 'User');
+
+    res.json({ success: true, oldFileName: safeOld, newFileName: safeNew });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 5. Move PDF File to Another Folder
+app.post('/api/files/move', (req: Request, res: Response) => {
+  try {
+    const { sourceFolder, targetFolder, fileName } = req.body;
+    if (!sourceFolder || !targetFolder || !fileName) {
+      return res.status(400).json({ success: false, error: 'स्रोत फोल्डर, गन्तव्य फोल्डर र फाइल नाम आवश्यक छ।' });
+    }
+    const sourceFilePath = path.join(DOCUMENTS_ROOT, sourceFolder, fileName);
+    const targetDir = path.join(DOCUMENTS_ROOT, targetFolder);
+    const targetFilePath = path.join(targetDir, fileName);
+
+    if (!fs.existsSync(sourceFilePath)) {
+      return res.status(404).json({ success: false, error: 'स्रोत PDF फाइल फेला परेन।' });
+    }
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+    }
+    if (fs.existsSync(targetFilePath) && sourceFolder !== targetFolder) {
+      return res.status(400).json({ success: false, error: 'गन्तव्य फोल्डरमा उही नामको फाइल पहिल्यै छ। Overwrite हुनबाट रोकियो।' });
+    }
+
+    fs.renameSync(sourceFilePath, targetFilePath);
+    pdfIndexStore.renameDocument(sourceFilePath, targetFilePath, fileName);
+    securityManager.logAction('MOVE_FILE', fileName, `Moved from "${sourceFolder}" to "${targetFolder}"`, 'User');
+
+    res.json({ success: true, message: `PDF फाइल सफलतापूर्वक "${targetFolder}" मा सारियो।` });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 6. Upload PDF file with Duplicate Overwrite Protection
 app.post('/api/upload', (req: Request, res: Response) => {
   try {
     const { folderName, fileName, base64Content } = req.body;
@@ -119,26 +218,197 @@ app.post('/api/upload', (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'अधुरो डाटा। फोल्डर, नाम र फाइल सामग्री आवश्यक छ।' });
     }
     const safeFolder = folderName.replace(/[\/\\:*?"<>|]/g, '').trim();
-    const safeFile = fileName.replace(/[\/\\:*?"<>|]/g, '').trim();
+    let safeFile = fileName.replace(/[\/\\:*?"<>|]/g, '').trim();
+    if (!safeFile.toLowerCase().endsWith('.pdf')) {
+      safeFile += '.pdf';
+    }
+
     const folderPath = path.join(DOCUMENTS_ROOT, safeFolder);
     if (!fs.existsSync(folderPath)) {
       fs.mkdirSync(folderPath, { recursive: true });
     }
-    const filePath = path.join(folderPath, safeFile.endsWith('.pdf') ? safeFile : `${safeFile}.pdf`);
+
+    let filePath = path.join(folderPath, safeFile);
+    // Duplicate filename protection: if exists, append timestamp instead of destroying old file
+    if (fs.existsSync(filePath)) {
+      const base = path.basename(safeFile, '.pdf');
+      safeFile = `${base}_${Date.now()}.pdf`;
+      filePath = path.join(folderPath, safeFile);
+    }
+
     const buffer = Buffer.from(base64Content, 'base64');
     fs.writeFileSync(filePath, buffer);
+    securityManager.logAction('UPLOAD_FILE', safeFile, `Uploaded into "${safeFolder}" (${(buffer.length / 1024 / 1024).toFixed(2)} MB)`, 'User');
 
-    res.json({ success: true, message: 'PDF फाइल सफलतापूर्वक सुरक्षित भयो।' });
+    res.json({ success: true, fileName: safeFile, message: 'PDF फाइल सफलतापूर्वक सुरक्षित भयो।' });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// 4. Load & Index Selected Folders or Single PDF
+// 7. Security: Request Deletion (Step 1)
+app.post('/api/security/delete-request', (req: Request, res: Response) => {
+  try {
+    const { itemType, targetPath, targetName, folderName, reason, requestedBy } = req.body;
+    if (!itemType || !targetPath || !targetName || !reason) {
+      return res.status(400).json({ success: false, error: 'Delete अनुरोधका लागि वस्तुको प्रकार, नाम र कारण अनिवार्य छ।' });
+    }
+
+    let filesContained: string[] = [];
+    if (itemType === 'folder') {
+      const folderFull = path.join(DOCUMENTS_ROOT, targetPath);
+      if (fs.existsSync(folderFull)) {
+        filesContained = fs.readdirSync(folderFull).filter(f => f.toLowerCase().endsWith('.pdf'));
+      }
+    }
+
+    const newRequest = securityManager.createDeleteRequest(
+      itemType,
+      targetPath,
+      targetName,
+      folderName || targetName,
+      reason,
+      requestedBy || 'User',
+      filesContained
+    );
+
+    res.json({
+      success: true,
+      message: 'Delete अनुरोध दर्ता भयो। अब यो Developer Review मा पठाइएको छ।',
+      request: newRequest
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 8. Security: Developer Review (Step 2)
+app.post('/api/security/developer-review', (req: Request, res: Response) => {
+  try {
+    const { requestId, decision, notes, developerName } = req.body;
+    if (!requestId || !decision || !notes) {
+      return res.status(400).json({ success: false, error: 'RequestId, decision र समीक्षा टिप्पणी आवश्यक छ।' });
+    }
+
+    const result = securityManager.reviewRequest(requestId, decision, notes, developerName || 'Senior Developer');
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    res.json({
+      success: true,
+      message: decision === 'APPROVED'
+        ? 'Developer द्वारा स्वीकृत। अब अन्तिम Delete का लागि Owner Password आवश्यक छ।'
+        : 'Developer द्वारा Delete अनुरोध अस्वीकृत गरियो।',
+      request: result.request
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 9. Security: Owner Password Final Approval & Move to Trash (Step 3)
+app.post('/api/security/owner-confirm-delete', (req: Request, res: Response) => {
+  try {
+    const { requestId, ownerPassword } = req.body;
+    if (!requestId || !ownerPassword) {
+      return res.status(400).json({ success: false, error: 'अन्तिम Delete का लागि Owner Password अनिवार्य छ।' });
+    }
+
+    const result = securityManager.executeOwnerDelete(requestId, ownerPassword, DOCUMENTS_ROOT);
+    if (!result.success) {
+      return res.status(403).json(result);
+    }
+
+    // Clean up memory index
+    if (result.request?.itemType === 'pdf') {
+      const fullPath = path.join(DOCUMENTS_ROOT, result.request.targetPath);
+      pdfIndexStore.removeDocument(fullPath);
+    }
+
+    res.json({
+      success: true,
+      message: 'Owner Password प्रमाणीकरण सफल! वस्तु सुरक्षित Trash (Soft Delete) मा सारियो।',
+      request: result.request
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 10. Security: Restore from Trash
+app.post('/api/security/restore', (req: Request, res: Response) => {
+  try {
+    const { requestId } = req.body;
+    if (!requestId) {
+      return res.status(400).json({ success: false, error: 'RequestId आवश्यक छ।' });
+    }
+
+    const result = securityManager.restoreFromTrash(requestId, DOCUMENTS_ROOT);
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    res.json({
+      success: true,
+      message: 'Trash बाट सफलतापूर्वक पुनर्स्थापना (Restore) गरियो।',
+      request: result.request
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 11. Security: Get Requests & Audit Logs
+app.get('/api/security/dashboard', (req: Request, res: Response) => {
+  try {
+    const requests = securityManager.getRequests();
+    const auditLogs = securityManager.getAuditLogs();
+    const isOwnerPasswordSet = securityManager.isOwnerPasswordSet();
+
+    res.json({
+      success: true,
+      isOwnerPasswordSet,
+      pendingDeveloperCount: requests.filter(r => r.status === 'PENDING_DEVELOPER').length,
+      pendingOwnerCount: requests.filter(r => r.status === 'APPROVED_BY_DEVELOPER').length,
+      trashCount: requests.filter(r => r.status === 'EXECUTED_TRASH').length,
+      requests,
+      auditLogs
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 12. Security: Set/Update Owner Password
+app.post('/api/security/owner-set-password', (req: Request, res: Response) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    if (!newPassword || newPassword.length < 6) {
+      return res.status(400).json({ success: false, error: 'नयाँ पासवर्ड कम्तीमा ६ अक्षरको हुनुपर्छ।' });
+    }
+
+    if (securityManager.isOwnerPasswordSet()) {
+      if (!currentPassword || !securityManager.verifyOwnerPassword(currentPassword)) {
+        return res.status(403).json({ success: false, error: 'पुरानो Owner Password मिलेन।' });
+      }
+    }
+
+    const success = securityManager.setOwnerPassword(newPassword);
+    if (!success) {
+      return res.status(400).json({ success: false, error: 'पासवर्ड सुरक्षित गर्न सकिएन।' });
+    }
+
+    res.json({ success: true, message: 'Owner Password सफलतापूर्वक अद्यावधिक भयो।' });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 13. Load & Index Selected Folders or Single PDF
 app.post('/api/load-selected', async (req: Request, res: Response) => {
   try {
     const { selectedFolders, singleFolder, singlePdf, mode } = req.body;
-    // Reset if changing scope or user requested
     if (req.body.clearPrevious) {
       pdfIndexStore.clear();
     }
@@ -169,7 +439,6 @@ app.post('/api/load-selected', async (req: Request, res: Response) => {
       });
     }
 
-    // Index each file asynchronously
     for (const item of filesToIndex) {
       await pdfIndexStore.indexFile(item.filePath, item.folderName);
     }
@@ -193,7 +462,7 @@ app.post('/api/load-selected', async (req: Request, res: Response) => {
   }
 });
 
-// 5. Local Search Endpoint
+// 14. Local Search Endpoint
 app.post('/api/search', (req: Request, res: Response) => {
   try {
     const { type, query, scope, folder, pdf } = req.body;
@@ -204,7 +473,6 @@ app.post('/api/search', (req: Request, res: Response) => {
     let filterFolder = folder;
     let filterPdf = pdf;
     if (scope === 'multiple') {
-      // Multiple folders: search across all loaded documents or selected folders
       filterPdf = undefined;
     }
 
@@ -222,7 +490,7 @@ app.post('/api/search', (req: Request, res: Response) => {
   }
 });
 
-// 6. Get Page Content & Highlight data for PDF viewer
+// 15. Get Page Content & Highlight data for PDF viewer
 app.get('/api/pdf-content', (req: Request, res: Response) => {
   try {
     const folder = req.query.folder as string;
@@ -245,7 +513,6 @@ app.get('/api/pdf-content', (req: Request, res: Response) => {
       return res.status(404).json({ success: false, error: `पृष्ठ ${pageNum} फेला परेन।` });
     }
 
-    // Find any headers on this page
     const pageHeaders = [
       ...doc.dafas.filter(d => d.page === pageNum),
       ...doc.niyams.filter(n => n.page === pageNum),
@@ -266,7 +533,7 @@ app.get('/api/pdf-content', (req: Request, res: Response) => {
   }
 });
 
-// 7. Stream Raw PDF File for PDF.js Canvas / Embed
+// 16. Stream Raw PDF File
 app.get('/api/pdf-raw', (req: Request, res: Response) => {
   try {
     const folder = req.query.folder as string;
@@ -288,7 +555,7 @@ app.get('/api/pdf-raw', (req: Request, res: Response) => {
   }
 });
 
-// 8. Gemini API Key Validation
+// 17. Gemini API Key Validation
 app.post('/api/gemini/test-key', async (req: Request, res: Response) => {
   try {
     const { apiKey } = req.body;
@@ -302,7 +569,7 @@ app.post('/api/gemini/test-key', async (req: Request, res: Response) => {
   }
 });
 
-// 9. Gemini Chat 1: Inside PDF
+// 18. Gemini Chat 1: Inside PDF
 app.post('/api/gemini/chat-inside', async (req: Request, res: Response) => {
   try {
     const { apiKey, question, selectedPdf } = req.body;
@@ -317,7 +584,7 @@ app.post('/api/gemini/chat-inside', async (req: Request, res: Response) => {
   }
 });
 
-// 10. Gemini Chat 2: Outside PDF / Internet Search Grounding
+// 19. Gemini Chat 2: Outside PDF / Internet Search Grounding
 app.post('/api/gemini/chat-outside', async (req: Request, res: Response) => {
   try {
     const { apiKey, question, selectedPdf } = req.body;

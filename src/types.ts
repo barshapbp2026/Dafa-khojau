@@ -1,4 +1,4 @@
-export type SearchType = 'dafa' | 'niyam' | 'dhara' | 'nirdeshan' | 'anusuchi' | 'sabda';
+export type SearchType = 'dhara' | 'dafa' | 'niyam' | 'nirdeshan' | 'anusuchi' | 'sabda';
 
 export interface FolderItem {
   folderName: string;
@@ -61,4 +61,37 @@ export interface ChatMessageItem {
     url?: string;
     title?: string;
   }[];
+}
+
+export interface SecurityRequestItem {
+  id: string;
+  itemType: 'folder' | 'pdf';
+  targetPath: string;
+  targetName: string;
+  folderName: string;
+  filesContained?: string[];
+  reason: string;
+  requestedAt: string;
+  requestedBy: string;
+  status: 'PENDING_DEVELOPER' | 'APPROVED_BY_DEVELOPER' | 'REJECTED' | 'EXECUTED_TRASH' | 'RESTORED';
+  developerReview?: {
+    reviewedAt: string;
+    reviewedBy: string;
+    notes: string;
+    decision: 'APPROVED' | 'REJECTED';
+  };
+  ownerApproval?: {
+    approvedAt: string;
+    verifiedWithPassword: boolean;
+  };
+  trashedPath?: string;
+}
+
+export interface AuditLogItem {
+  id: string;
+  timestamp: string;
+  action: string;
+  targetName: string;
+  details: string;
+  actor: string;
 }

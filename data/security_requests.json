@@ -1,0 +1,25 @@
+[
+  {
+    "id": "req_1794199089510_ojwer",
+    "itemType": "pdf",
+    "targetPath": "नापी तथा नक्सा/परीक्षण_नक्कल.pdf",
+    "targetName": "परीक्षण_नक्कल.pdf",
+    "folderName": "नापी तथा नक्सा",
+    "filesContained": [],
+    "reason": "नक्कल परीक्षण फाइल हटाउन अनुरोध",
+    "requestedAt": "2026-11-09T04:38:09.510Z",
+    "requestedBy": "Branch Officer",
+    "status": "RESTORED",
+    "developerReview": {
+      "reviewedAt": "2026-11-09T04:38:09.538Z",
+      "reviewedBy": "Senior Reviewer",
+      "notes": "फाइल नक्कल भएको प्रमाणित गरियो। Owner password को लागि पठाइयो।",
+      "decision": "APPROVED"
+    },
+    "trashedPath": "1794199089585_परीक्षण_नक्कल.pdf",
+    "ownerApproval": {
+      "approvedAt": "2026-11-09T04:38:09.585Z",
+      "verifiedWithPassword": true
+    }
+  }
+]

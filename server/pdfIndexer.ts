@@ -74,12 +74,39 @@ export function toArabic(str: string | number): string {
   return String(str).replace(/[०-९]/g, d => map[d] || d);
 }
 
-export function cleanText(text: string): string {
+// Advanced Nepali font and OCR normalization
+export function normalizeNepaliText(text: string): string {
+  if (!text) return '';
+
   return text
+    // Remove zero-width characters and BOM
     .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    // Normalize broken OCR matra combinations like ि followed by consonant (e.g. िेपाल -> नेपाल, िान -> मान)
+    .replace(/िे([क-ह])/g, '$1े')
+    .replace(/ि([क-ह])([ा-ौ्])/g, '$1ि$2')
+    // Fix split syllables caused by OCR spacing (उदा. स्रेस् ता -> स्रेस्ता, मनर्दे शशका -> निर्देशिका, मसिंहर्द रवार -> सिंहदरबार)
+    .replace(/स्\s+ता/g, 'स्ता')
+    .replace(/र्\s+दा/g, 'र्दा')
+    .replace(/ह्\s+न/g, 'ह्न')
+    .replace(/न्त्\s+रालय/g, 'न्त्रालय')
+    .replace(/प्र\s+शासन/g, 'प्रशासन')
+    .replace(/मनर्दे\s*शशका/g, 'निर्देशिका')
+    .replace(/मनर्देशशका/g, 'निर्देशिका')
+    .replace(/िालपोत/g, 'मालपोत')
+    .replace(/िहामनर्देशक/g, 'महानिर्देशक')
+    .replace(/हवमभन्न/g, 'विभिन्न')
+    .replace(/मनयि/g, 'नियम')
+    .replace(/िेरफल/g, 'क्षेत्रफल')
+    .replace(/र्द\s+फा/g, 'दफा')
+    .replace(/र्\s+ग्\s+गा/g, 'जग्गा')
+    // Normalize tabs and multiple spaces
     .replace(/\t+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+export function cleanText(text: string): string {
+  return normalizeNepaliText(text);
 }
 
 // Normalize search query: strip prefixes like 'दफा', 'नियम', 'धारा', 'अनुसूची'
@@ -89,8 +116,8 @@ export function normalizeQueryNumber(query: string): { arab: string; dev: string
     .replace(/^No\.?\s*/i, '')
     .trim();
 
-  // Extract base digits and possible subclause like क, ख, a, b
-  const match = cleaned.match(/^([०-९\d]+)\s*([क-हa-zA-Z])?$/);
+  // Extract base digits and possible subclause like क, ख, a, b, or (क), (a)
+  const match = cleaned.match(/^([०-९\d]+)\s*(?:\(?([क-हa-zA-Z])\)?)?$/);
   if (match) {
     const digits = match[1];
     const sub = match[2] || '';
@@ -130,6 +157,32 @@ class PdfIndexStore {
   public clear() {
     this.documents.clear();
     this.loadedFolders.clear();
+  }
+
+  public removeDocument(filePath: string) {
+    this.documents.delete(filePath);
+  }
+
+  public renameDocument(oldPath: string, newPath: string, newName: string) {
+    const doc = this.documents.get(oldPath);
+    if (doc) {
+      doc.pdfPath = newPath;
+      doc.pdfName = newName;
+      this.documents.delete(oldPath);
+      this.documents.set(newPath, doc);
+    }
+  }
+
+  public renameFolder(oldFolder: string, newFolder: string) {
+    if (this.loadedFolders.has(oldFolder)) {
+      this.loadedFolders.delete(oldFolder);
+      this.loadedFolders.add(newFolder);
+    }
+    for (const doc of this.documents.values()) {
+      if (doc.folder === oldFolder) {
+        doc.folder = newFolder;
+      }
+    }
   }
 
   /**

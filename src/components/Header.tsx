@@ -7,13 +7,19 @@ interface HeaderProps {
   mode: 'single' | 'multiple';
   onModeChange: (mode: 'single' | 'multiple') => void;
   geminiActive: boolean;
+  showSecurityPanel: boolean;
+  onToggleSecurityPanel: () => void;
+  pendingReviewCount: number;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   stats,
   mode,
   onModeChange,
-  geminiActive
+  geminiActive,
+  showSecurityPanel,
+  onToggleSecurityPanel,
+  pendingReviewCount
 }) => {
   const [showGuide, setShowGuide] = useState(false);
 
@@ -42,7 +48,7 @@ export const Header: React.FC<HeaderProps> = ({
                 )}
               </div>
               <p className="text-xs text-slate-500 font-medium mt-0.5">
-                नेपाली कानुनी तथा प्रशासनिक PDF खोज प्रणाली — दफा, नियम, धारा, निर्देशन, अनुसूची, शब्द खोज र Gemini AI
+                नेपाली कानुनी तथा प्रशासनिक PDF खोज प्रणाली — धारा, दफा, नियम, निर्देशन, अनुसूची, शब्द खोज र Gemini AI
               </p>
             </div>
           </div>
@@ -74,6 +80,23 @@ export const Header: React.FC<HeaderProps> = ({
                 बहु-फोल्डर खोज (Multiple)
               </button>
             </div>
+
+            {/* Developer Review & Security Button */}
+            <button
+              onClick={onToggleSecurityPanel}
+              className={`inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors border ${
+                showSecurityPanel
+                  ? 'bg-red-900 text-white border-red-900 shadow-xs'
+                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border-slate-200'
+              }`}
+            >
+              <span>Developer Review & Security</span>
+              {pendingReviewCount > 0 && (
+                <span className="bg-amber-500 text-slate-900 font-extrabold text-[10px] px-1.5 py-0.2 rounded-full">
+                  {pendingReviewCount}
+                </span>
+              )}
+            </button>
 
             {/* Help Guide Button */}
             <button

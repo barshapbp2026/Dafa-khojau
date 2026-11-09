@@ -11,8 +11,9 @@ import { SearchSection } from './components/SearchSection';
 import { SearchResults } from './components/SearchResults';
 import { PdfViewer } from './components/PdfViewer';
 import { GeminiAssistant } from './components/GeminiAssistant';
+import { DeveloperReviewPanel } from './components/DeveloperReviewPanel';
 import { FolderItem, IndexStats, SearchResultItem, SearchType } from './types';
-import { AlertCircle, CheckCircle } from 'lucide-react';
+import { AlertCircle, CheckCircle, ShieldAlert } from 'lucide-react';
 
 export default function App() {
   const [folders, setFolders] = useState<FolderItem[]>([]);
@@ -24,6 +25,10 @@ export default function App() {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [stats, setStats] = useState<IndexStats | null>(null);
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+  // Security Panel State
+  const [showSecurityPanel, setShowSecurityPanel] = useState<boolean>(false);
+  const [pendingReviewCount, setPendingReviewCount] = useState<number>(0);
 
   // Search state
   const [isSearching, setIsSearching] = useState<boolean>(false);
@@ -44,6 +49,17 @@ export default function App() {
     setTimeout(() => setToastMessage(null), 4000);
   };
 
+  // Fetch security dashboard counts
+  const fetchSecurityCounts = useCallback(async () => {
+    try {
+      const res = await fetch('/api/security/dashboard');
+      const data = await res.json();
+      if (data.success) {
+        setPendingReviewCount((data.pendingDeveloperCount || 0) + (data.pendingOwnerCount || 0));
+      }
+    } catch {}
+  }, []);
+
   // Fetch folders and stats
   const fetchFolders = useCallback(async (autoIndexFirst = false) => {
     try {
@@ -61,11 +77,11 @@ export default function App() {
         // Set default folder and PDF
         if (data.folders.length > 0) {
           const firstFolder = data.folders[0];
-          setSingleFolder(firstFolder.folderName);
+          setSingleFolder(prev => prev || firstFolder.folderName);
           if (firstFolder.files.length > 0) {
-            setSinglePdf(firstFolder.files[0].name);
+            setSinglePdf(prev => prev || firstFolder.files[0].name);
           }
-          setSelectedFolders([firstFolder.folderName]);
+          setSelectedFolders(prev => prev.length > 0 ? prev : [firstFolder.folderName]);
 
           // Pre-load initial document so user can search immediately
           if (autoIndexFirst && firstFolder.files.length > 0) {
@@ -104,14 +120,15 @@ export default function App() {
         });
         showToast(`प्रारम्भिक कानुनी निर्देशिका (${data.totalPages} पृष्ठ) खोजका लागि तयार छ!`);
       }
-    } catch (err: any) {
+    } catch {
       setIsLoading(false);
     }
   };
 
   useEffect(() => {
     fetchFolders(true);
-  }, [fetchFolders]);
+    fetchSecurityCounts();
+  }, [fetchFolders, fetchSecurityCounts]);
 
   // Handle Load Selected
   const handleLoadSelected = async () => {
@@ -143,7 +160,6 @@ export default function App() {
           memoryMB: data.memoryMB
         });
         showToast(data.message || 'छानिएका कागजातहरू सफलतापूर्वक इन्डेक्स गरियो!');
-        // Refresh folder list to update status badges
         fetchFolders(false);
       } else {
         showToast(data.error || 'लोड गर्न सकिएन।', 'error');
@@ -210,6 +226,9 @@ export default function App() {
           setSearchResults([]);
         }}
         geminiActive={geminiActive}
+        showSecurityPanel={showSecurityPanel}
+        onToggleSecurityPanel={() => setShowSecurityPanel(prev => !prev)}
+        pendingReviewCount={pendingReviewCount}
       />
 
       {/* Toast message notification */}
@@ -234,7 +253,17 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        {/* Folder / Document Selector */}
+        {/* Developer Review & Security Panel (Toggleable) */}
+        {showSecurityPanel && (
+          <DeveloperReviewPanel
+            onActionComplete={() => {
+              fetchFolders(false);
+              fetchSecurityCounts();
+            }}
+          />
+        )}
+
+        {/* Folder / Document Selector with Rename, Move, Upload, and Delete Request */}
         <FolderSelector
           folders={folders}
           selectedFolders={selectedFolders}
@@ -252,11 +281,17 @@ export default function App() {
           onSingleFolderChange={setSingleFolder}
           singlePdf={singlePdf}
           onSinglePdfChange={setSinglePdf}
-          onRefresh={() => fetchFolders(false)}
-          onFolderCreated={() => fetchFolders(false)}
+          onRefresh={() => {
+            fetchFolders(false);
+            fetchSecurityCounts();
+          }}
+          onFolderChanged={() => {
+            fetchFolders(false);
+            fetchSecurityCounts();
+          }}
         />
 
-        {/* 6 Independent Search Boxes */}
+        {/* 6 Independent Search Boxes (Exact Order: Dhara, Dafa, Niyam, Nirdeshan, Anusuchi, Sabda) */}
         <SearchSection
           onSearch={handleSearch}
           isSearching={isSearching}
@@ -274,7 +309,7 @@ export default function App() {
           onOpenViewer={item => setViewerItem(item)}
         />
 
-        {/* 2. Middle Ad Slot */}
+        {/* Middle Ad Slot */}
         <AdBanner position="middle" />
 
         {/* Gemini AI Assistant Section */}
@@ -284,7 +319,7 @@ export default function App() {
         />
       </main>
 
-      {/* 3. Bottom Ad Slot / Footer */}
+      {/* Bottom Ad Slot / Footer */}
       <AdBanner position="bottom" />
 
       {/* PDF Viewer Modal with Dark Red Header Highlight */}
