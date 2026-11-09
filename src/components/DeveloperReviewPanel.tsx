@@ -693,7 +693,7 @@ export const DeveloperReviewPanel: React.FC<DeveloperReviewPanelProps> = ({ onAc
                     {envReport?.GITHUB_REPO.isSet ? 'कन्फिगर' : 'Default'}
                   </span>
                 </div>
-                <div className="text-[11px] font-mono text-slate-700">{envReport?.GITHUB_REPO.value || 'any-pdf-'}</div>
+                <div className="text-[11px] font-mono text-slate-700">{envReport?.GITHUB_REPO.value || 'Dafa-khojau'}</div>
               </div>
 
               {/* 4. GITHUB_BRANCH */}
@@ -704,7 +704,7 @@ export const DeveloperReviewPanel: React.FC<DeveloperReviewPanelProps> = ({ onAc
                     {envReport?.GITHUB_BRANCH.isSet ? 'कन्फिगर' : 'Default'}
                   </span>
                 </div>
-                <div className="text-[11px] font-mono text-slate-700">{envReport?.GITHUB_BRANCH.value || 'feature/full-nepali-pdf-search'}</div>
+                <div className="text-[11px] font-mono text-slate-700">{envReport?.GITHUB_BRANCH.value || 'main'}</div>
               </div>
 
               {/* 5. ADMIN_PASSWORD */}
@@ -843,8 +843,8 @@ export const DeveloperReviewPanel: React.FC<DeveloperReviewPanelProps> = ({ onAc
               <div className="pt-2 text-slate-400"># २. Netrun Secrets प्यानलमा निम्न कुञ्जीहरू थप्नुहोस्:</div>
               <div>GITHUB_TOKEN="ghp_your_personal_access_token"</div>
               <div>GITHUB_OWNER="barshapbp2026"</div>
-              <div>GITHUB_REPO="any-pdf-"</div>
-              <div>GITHUB_BRANCH="feature/full-nepali-pdf-search"</div>
+              <div>GITHUB_REPO="Dafa-khojau"</div>
+              <div>GITHUB_BRANCH="main"</div>
               <div>ADMIN_PASSWORD="nepal@admin2082"</div>
               <div>ENABLE_GIT_LFS="true"</div>
             </div>

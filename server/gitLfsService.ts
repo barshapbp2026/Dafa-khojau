@@ -77,11 +77,11 @@ export class GitLfsService {
       },
       GITHUB_REPO: {
         isSet: hasRepo,
-        value: process.env.GITHUB_REPO || 'any-pdf-'
+        value: process.env.GITHUB_REPO || 'Dafa-khojau'
       },
       GITHUB_BRANCH: {
         isSet: hasBranch,
-        value: process.env.GITHUB_BRANCH || 'feature/full-nepali-pdf-search'
+        value: process.env.GITHUB_BRANCH || 'main'
       },
       ADMIN_PASSWORD: {
         isSet: hasAdminPass,
@@ -201,7 +201,7 @@ export class GitLfsService {
     // Try downloading from GitHub LFS API if GITHUB_TOKEN is available
     const token = process.env.GITHUB_TOKEN;
     const owner = process.env.GITHUB_OWNER || 'barshapbp2026';
-    const repo = process.env.GITHUB_REPO || 'any-pdf-';
+    const repo = process.env.GITHUB_REPO || 'Dafa-khojau';
 
     if (token) {
       try {
@@ -236,7 +236,7 @@ export class GitLfsService {
     const payload = {
       operation: 'upload',
       transfers: ['basic'],
-      ref: { name: process.env.GITHUB_BRANCH || 'feature/full-nepali-pdf-search' },
+      ref: { name: process.env.GITHUB_BRANCH || 'main' },
       objects: [
         {
           oid: oid,
@@ -296,7 +296,7 @@ export class GitLfsService {
     const payload = {
       operation: 'download',
       transfers: ['basic'],
-      ref: { name: process.env.GITHUB_BRANCH || 'feature/full-nepali-pdf-search' },
+      ref: { name: process.env.GITHUB_BRANCH || 'main' },
       objects: [{ oid, size }]
     };
 
@@ -340,8 +340,8 @@ export class GitLfsService {
   ): Promise<{ success: boolean; commitSha?: string; error?: string }> {
     const token = process.env.GITHUB_TOKEN;
     const owner = process.env.GITHUB_OWNER || 'barshapbp2026';
-    const repo = process.env.GITHUB_REPO || 'any-pdf-';
-    const branch = process.env.GITHUB_BRANCH || 'feature/full-nepali-pdf-search';
+    const repo = process.env.GITHUB_REPO || 'Dafa-khojau';
+    const branch = process.env.GITHUB_BRANCH || 'main';
 
     if (!token) {
       return {
@@ -559,7 +559,7 @@ export class GitLfsService {
     // Step 3: Remote GitHub LFS Batch API Connection Test
     const token = process.env.GITHUB_TOKEN;
     const owner = process.env.GITHUB_OWNER || 'barshapbp2026';
-    const repo = process.env.GITHUB_REPO || 'any-pdf-';
+    const repo = process.env.GITHUB_REPO || 'Dafa-khojau';
 
     if (!token) {
       steps.push({
@@ -580,7 +580,7 @@ export class GitLfsService {
           body: JSON.stringify({
             operation: 'download',
             transfers: ['basic'],
-            ref: { name: process.env.GITHUB_BRANCH || 'feature/full-nepali-pdf-search' },
+            ref: { name: process.env.GITHUB_BRANCH || 'main' },
             objects: [{ oid: calculatedOid, size: sampleBinary.length }]
           })
         });
