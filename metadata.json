@@ -1,0 +1,6 @@
+{
+  "name": "नेपाली कानुनी PDF सहायक (Nepali Legal PDF Search & AI Assistant)",
+  "description": "नेपाली कानुनी तथा प्रशासनिक PDF खोज र विश्लेषण प्रणाली — दफा, नियम, धारा, निर्देशन, अनुसूची, शब्द खोज र Gemini AI।",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
